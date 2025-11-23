@@ -41,7 +41,16 @@ class MathEvaluator:
             # Pattern 7: Answer at end after "Answer:"
             (r'[Aa]nswer[:\s]+([^\n]+)$', 'answer_colon'),
             
-            # Pattern 8: Last number in the response (fallback)
+            # Pattern 8: "The value/length/number... is X" at the end
+            (r'(?:[Tt]he (?:value|length|number|distance|least|greatest)(?: [^.]*)? is|which is)\s+\$?(-?\d+(?:,\d{3})*(?:\.\d+)?)\$?[\s.]*\Z', 'value_is_at_end'),
+            
+            # Pattern 9: "= NUMBER" near the end (common in calculations like "m+n = 809")
+            # This should come before last_number to catch final results
+            # Using \Z instead of $ to match only at end of string (not end of line)
+            # Handles optional LaTeX $ delimiters and closing brackets \] after the number
+            (r'=\s*\$?(-?\d+(?:,\d{3})*(?:\.\d+)?)\$?(?:\s|\.|\\\])*\Z', 'equals_at_end'),
+            
+            # Pattern 10: Last number in the response (fallback)
             (r'(?:^|\s)(-?\d+(?:\.\d+)?|\d{1,3}(?:,\d{3})*(?:\.\d+)?)(?:\s|$)', 'last_number'),
         ]
     
@@ -170,20 +179,23 @@ class MathEvaluator:
         return is_correct, extracted_answer, method
 
 
-def get_evaluator(evaluator_type: str = "math") -> MathEvaluator:
+def get_evaluator(evaluator_type: str = "math", **kwargs):
     """
     Factory function to get appropriate evaluator.
     
     Args:
         evaluator_type: Type of evaluator ('math', 'code', etc.)
+        **kwargs: Additional arguments for evaluator (e.g., timeout for code)
     
     Returns:
         Evaluator instance
     """
     if evaluator_type == "math":
         return MathEvaluator()
+    elif evaluator_type == "code":
+        from .code_eval import CodeEvaluator
+        timeout = kwargs.get('timeout', 5)
+        return CodeEvaluator(timeout=timeout)
     else:
-        # For now, only math evaluator is implemented
-        # Future: add CodeEvaluator, etc.
         raise NotImplementedError(f"Evaluator type '{evaluator_type}' not implemented")
 

@@ -1,0 +1,30 @@
+# MBPP (Mostly Basic Python Problems) coding benchmark config
+
+# Dataset configuration
+dataset_path: data/mbpp_full.jsonl  # Extracted from your lm-eval output
+dataset_name: MBPP
+
+# Model configuration
+provider: gemini
+model: gemini-2.5-pro
+# api_key: sk-xxx  # Or use OPENAI_API_KEY environment variable
+
+# Generation parameters
+temperature: 0.0
+max_output_tokens: 65536  # Increased for code generation
+
+# Runtime configuration
+concurrency: 100
+timeout: 120
+max_retries: 3
+
+# Evaluation configuration
+evaluator_type: code  # Use code evaluator instead of math
+enforce_output_format: true  # Guide model to use markdown code blocks
+execution_timeout: 10  # Timeout for code execution in seconds
+include_challenge_tests: true  # Include challenge test cases
+
+# Optional metadata
+experiment_name: mbpp_gemini-2.5-pro_baseline
+notes: Baseline run on MBPP coding benchmark
+

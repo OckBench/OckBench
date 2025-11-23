@@ -7,6 +7,7 @@ from google import genai
 
 from .base import BaseModelClient
 from ..core.schemas import ModelResponse, TokenUsage
+from ..utils.prompt_formatter import format_prompt
 
 
 logger = logging.getLogger(__name__)
@@ -14,10 +15,7 @@ logger = logging.getLogger(__name__)
 
 class GeminiClient(BaseModelClient):
     """
-    Client for Google Gemini API (New SDK).
-    
-    Supports Gemini models (gemini-pro, gemini-1.5-pro, gemini-2.0-flash, etc.)
-    Uses the new google-genai SDK (from google import genai)
+    Client for Google Gemini API.
     """
     
     def __init__(
@@ -33,7 +31,7 @@ class GeminiClient(BaseModelClient):
         Initialize Gemini client.
         
         Args:
-            model: Model name (e.g., 'gemini-2.0-flash-exp', 'gemini-1.5-pro')
+            model: Model name (e.g., 'gemini-2.5-flash')
             api_key: Google API key
             base_url: Not used for Gemini (included for consistency)
             timeout: Request timeout in seconds
@@ -59,11 +57,24 @@ class GeminiClient(BaseModelClient):
             prompt: Input prompt
             temperature: Sampling temperature
             max_output_tokens: Maximum output tokens
-            **kwargs: Additional parameters (top_p, etc.)
+            **kwargs: Additional parameters (top_p, enforce_format, etc.)
         
         Returns:
             ModelResponse: Response with text and tokens
         """
+        # Extract format enforcement params
+        enforce_format = kwargs.pop('enforce_output_format', False)
+        custom_instruction = kwargs.pop('custom_format_instruction', None)
+        evaluator_type = kwargs.pop('evaluator_type', 'math')
+        
+        # Format prompt with optional instruction
+        formatted_prompt = format_prompt(
+            problem=prompt,
+            enforce_format=enforce_format,
+            custom_instruction=custom_instruction,
+            evaluator_type=evaluator_type
+        )
+        
         # Build generation config for new SDK
         config = {
             'temperature': temperature,
@@ -77,7 +88,7 @@ class GeminiClient(BaseModelClient):
         try:
             # Make API call using new SDK (synchronous call in async context)
             # The new SDK doesn't have native async support yet
-            response = await self._generate_content_async(prompt, config)
+            response = await self._generate_content_async(formatted_prompt, config)
             
             # Debug: log response structure
             if logger.isEnabledFor(logging.DEBUG):
@@ -123,7 +134,7 @@ class GeminiClient(BaseModelClient):
                     logger.warning(
                         f"No text content found in Gemini response, "
                         f"but model used {tokens_temp.reasoning_tokens} thinking tokens. "
-                        f"Model may have decided not to answer after internal reasoning."
+                        f"Model may have decided not to answer after internal reasoning or the reasoning exceeded the max output tokens."
                     )
                 else:
                     logger.warning("No text content found in Gemini response")

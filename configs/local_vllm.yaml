@@ -1,0 +1,29 @@
+# Example config for local vLLM/SGLang server
+
+# Dataset configuration
+dataset_path: data/total_math_data.jsonl
+dataset_name: total_math_data
+
+# Model configuration
+provider: generic  # Use generic for OpenAI-compatible APIs
+model: Qwen/Qwen3-4B  # Model name on the server
+base_url: http://localhost:8000/v1  # vLLM/SGLang endpoint
+api_key: dummy  # Many local servers don't need a real key
+
+# Generation parameters
+temperature: 0.0
+max_context_window: 40960
+max_output_tokens: null
+
+# Runtime configuration
+concurrency: 200  # Can be higher for local serving
+timeout: 3000
+max_retries: 2
+
+# Evaluation configuration
+evaluator_type: math
+
+# Optional metadata
+experiment_name: total_math_data_qwen_vllm
+notes: Testing Qwen3-4B via local vLLM server
+

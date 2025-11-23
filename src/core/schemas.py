@@ -33,6 +33,12 @@ class BenchmarkConfig(BaseModel):
     
     # Evaluation config
     evaluator_type: str = Field("math", description="Type of evaluator to use")
+    enforce_output_format: bool = Field(False, description="Add instructions to prompt to enforce consistent output format")
+    custom_format_instruction: Optional[str] = Field(None, description="Custom format instruction (overrides default)")
+    
+    # Code evaluation specific
+    execution_timeout: int = Field(5, gt=0, description="Timeout for code execution in seconds")
+    include_challenge_tests: bool = Field(True, description="Include challenge tests in code evaluation")
     
     # Optional metadata
     experiment_name: Optional[str] = Field(None, description="Custom experiment name")
@@ -83,6 +89,7 @@ class EvaluationResult(BaseModel):
     
     problem_id: Any = Field(..., description="Problem identifier")
     question: str = Field(..., description="Original question")
+    formatted_prompt: Optional[str] = Field(None, description="Formatted prompt sent to model (includes format instructions, test cases, etc.)")
     ground_truth: Any = Field(..., description="Ground truth answer")
     
     model_response: str = Field(..., description="Full model response text")
@@ -95,6 +102,11 @@ class EvaluationResult(BaseModel):
     
     error: Optional[str] = Field(None, description="Error message if evaluation failed")
     extraction_method: Optional[str] = Field(None, description="Method used to extract answer")
+    
+    # Code evaluation specific fields
+    tests_passed: Optional[int] = Field(None, description="Number of tests passed (code problems)")
+    tests_total: Optional[int] = Field(None, description="Total number of tests (code problems)")
+    execution_error: Optional[str] = Field(None, description="Code execution error details")
 
 
 class ExperimentSummary(BaseModel):
