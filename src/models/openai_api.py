@@ -12,6 +12,7 @@ from openai import AsyncOpenAI
 
 from .base import BaseModelClient
 from ..core.schemas import ModelResponse, TokenUsage
+from ..utils.prompt_formatter import format_prompt
 
 
 logger = logging.getLogger(__name__)
@@ -71,14 +72,27 @@ class OpenAIClient(BaseModelClient):
             prompt: Input prompt
             temperature: Sampling temperature
             max_output_tokens: Maximum output tokens
-            **kwargs: Additional parameters (top_p, reasoning_effort, etc.)
+            **kwargs: Additional parameters (top_p, reasoning_effort, enforce_format, etc.)
         
         Returns:
             ModelResponse: Response with text and tokens
         """
+        # Extract format enforcement params
+        enforce_format = kwargs.pop('enforce_output_format', False)
+        custom_instruction = kwargs.pop('custom_format_instruction', None)
+        evaluator_type = kwargs.pop('evaluator_type', 'math')
+        
+        # Format prompt with optional instruction
+        formatted_prompt = format_prompt(
+            problem=prompt,
+            enforce_format=enforce_format,
+            custom_instruction=custom_instruction,
+            evaluator_type=evaluator_type
+        )
+        
         # Build messages
         messages = [
-            {"role": "user", "content": prompt}
+            {"role": "user", "content": formatted_prompt}
         ]
         
         # Build request parameters

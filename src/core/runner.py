@@ -139,13 +139,26 @@ class BenchmarkRunner:
                 # Calculate max_output_tokens (dynamic if max_context_window is set)
                 max_output_tokens = self._calculate_max_output_tokens(problem.problem)
                 
+                # Format the prompt with format enforcement if enabled
+                # This is what will actually be sent to the model
+                from ..utils.prompt_formatter import format_prompt
+                formatted_prompt = format_prompt(
+                    problem=problem.problem,
+                    enforce_format=self.config.enforce_output_format,
+                    custom_instruction=self.config.custom_format_instruction,
+                    evaluator_type=self.config.evaluator_type
+                )
+                
                 # Generate response
                 response = await self.client.generate(
                     prompt=problem.problem,
                     temperature=self.config.temperature,
                     max_output_tokens=max_output_tokens,
                     reasoning_effort=self.config.reasoning_effort,
-                    top_p=self.config.top_p
+                    top_p=self.config.top_p,
+                    enforce_output_format=self.config.enforce_output_format,
+                    custom_format_instruction=self.config.custom_format_instruction,
+                    evaluator_type=self.config.evaluator_type
                 )
                 
                 # Check for API error
@@ -153,7 +166,8 @@ class BenchmarkRunner:
                     logger.error(f"Error for problem {problem.id}: {response.error}")
                     result = EvaluationResult(
                         problem_id=problem.id,
-                        question=problem.problem,
+                        question=problem.problem,  # Original problem text
+                        formatted_prompt=formatted_prompt,  # Formatted prompt with instructions
                         ground_truth=problem.answer,
                         model_response=response.text or "",
                         extracted_answer=None,
@@ -165,22 +179,50 @@ class BenchmarkRunner:
                     )
                 else:
                     # Evaluate response
-                    is_correct, extracted_answer, method = self.evaluator.evaluate(
-                        response.text,
-                        problem.answer
-                    )
-                    
-                    result = EvaluationResult(
-                        problem_id=problem.id,
-                        question=problem.problem,
-                        ground_truth=problem.answer,
-                        model_response=response.text,
-                        extracted_answer=extracted_answer,
-                        correct=is_correct,
-                        tokens=response.tokens,
-                        latency=response.latency,
-                        extraction_method=method
-                    )
+                    if self.config.evaluator_type == "code":
+                        # Code evaluation with test cases
+                        test_cases = problem.metadata.get('test_cases', [])
+                        
+                        (is_correct, extracted_code, method, 
+                         tests_passed, tests_total, exec_error) = self.evaluator.evaluate(
+                            response.text,
+                            test_cases
+                        )
+                        
+                        result = EvaluationResult(
+                            problem_id=problem.id,
+                            question=problem.problem,  # Original problem text
+                            formatted_prompt=formatted_prompt,  # Formatted prompt with instructions
+                            ground_truth=problem.answer,
+                            model_response=response.text,
+                            extracted_answer=extracted_code,
+                            correct=is_correct,
+                            tokens=response.tokens,
+                            latency=response.latency,
+                            extraction_method=method,
+                            tests_passed=tests_passed,
+                            tests_total=tests_total,
+                            execution_error=exec_error
+                        )
+                    else:
+                        # Math evaluation
+                        is_correct, extracted_answer, method = self.evaluator.evaluate(
+                            response.text,
+                            problem.answer
+                        )
+                        
+                        result = EvaluationResult(
+                            problem_id=problem.id,
+                            question=problem.problem,  # Original problem text
+                            formatted_prompt=formatted_prompt,  # Formatted prompt with instructions
+                            ground_truth=problem.answer,
+                            model_response=response.text,
+                            extracted_answer=extracted_answer,
+                            correct=is_correct,
+                            tokens=response.tokens,
+                            latency=response.latency,
+                            extraction_method=method
+                        )
                 
                 if pbar:
                     pbar.update(1)
@@ -190,11 +232,20 @@ class BenchmarkRunner:
             except Exception as e:
                 logger.error(f"Exception processing problem {problem.id}: {e}")
                 
+                # Format prompt for error case too
+                from ..utils.prompt_formatter import format_prompt
+                formatted_prompt = format_prompt(
+                    problem=problem.problem,
+                    enforce_format=self.config.enforce_output_format,
+                    custom_instruction=self.config.custom_format_instruction,
+                    evaluator_type=self.config.evaluator_type
+                )
+                
                 # Return error result
                 from ..core.schemas import TokenUsage
                 result = EvaluationResult(
                     problem_id=problem.id,
-                    question=problem.problem,
+                    question=formatted_prompt,  # Save the formatted prompt
                     ground_truth=problem.answer,
                     model_response="",
                     extracted_answer=None,
@@ -319,7 +370,10 @@ class BenchmarkRunner:
         
         # Create evaluator
         logger.info("Initializing evaluator...")
-        self.evaluator = get_evaluator(self.config.evaluator_type)
+        evaluator_kwargs = {}
+        if self.config.evaluator_type == "code":
+            evaluator_kwargs['timeout'] = self.config.execution_timeout
+        self.evaluator = get_evaluator(self.config.evaluator_type, **evaluator_kwargs)
         
         # Run benchmark
         logger.info("Running benchmark...")

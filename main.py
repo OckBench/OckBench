@@ -123,8 +123,18 @@ Examples:
     parser.add_argument(
         '--evaluator',
         type=str,
-        default='math',
-        help='Evaluator type (default: math)'
+        default=None,
+        help='Evaluator type (default: from config or math)'
+    )
+    parser.add_argument(
+        '--enforce-format',
+        action='store_true',
+        help='Add instructions to prompt to enforce consistent output format (improves answer extraction)'
+    )
+    parser.add_argument(
+        '--format-instruction',
+        type=str,
+        help='Custom format instruction (overrides default)'
     )
     
     # Output parameters
@@ -213,13 +223,19 @@ def main():
             'timeout': 'timeout',
             'max_retries': 'max_retries',
             'evaluator': 'evaluator_type',
+            'enforce_format': 'enforce_output_format',
+            'format_instruction': 'custom_format_instruction',
             'experiment_name': 'experiment_name',
             'notes': 'notes',
         }
         
         for arg_name, config_field in arg_mapping.items():
             value = getattr(args, arg_name, None)
+            # Skip if None, or if it's a boolean flag that wasn't set
             if value is not None:
+                # For boolean flags (store_true), only override if True
+                if isinstance(value, bool) and not value:
+                    continue
                 config_overrides[config_field] = value
         
         # Run benchmark
