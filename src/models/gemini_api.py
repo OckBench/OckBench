@@ -198,7 +198,7 @@ class GeminiClient(BaseModelClient):
             TokenUsage: Token usage information
         """
         prompt_tokens = 0
-        completion_tokens = 0
+        answer_tokens = 0
         total_tokens = 0
         reasoning_tokens = 0  # For Gemini 2.5 Flash thinking tokens
         
@@ -213,7 +213,7 @@ class GeminiClient(BaseModelClient):
             # Try different field names for different SDK versions
             # Use or 0 to handle None values
             prompt_tokens = getattr(metadata, 'prompt_token_count', None) or 0
-            completion_tokens = getattr(metadata, 'candidates_token_count', None) or 0
+            answer_tokens = getattr(metadata, 'candidates_token_count', None) or 0
             total_tokens = getattr(metadata, 'total_token_count', None) or 0
             
             # Gemini 2.5 Flash has thinking tokens!
@@ -225,31 +225,35 @@ class GeminiClient(BaseModelClient):
             # Alternative field names
             if not prompt_tokens:
                 prompt_tokens = getattr(metadata, 'prompt_tokens', None) or 0
-            if not completion_tokens:
-                completion_tokens = getattr(metadata, 'completion_tokens', None) or 0
+            if not answer_tokens:
+                answer_tokens = getattr(metadata, 'completion_tokens', None) or 0
             if not total_tokens:
                 total_tokens = getattr(metadata, 'total_tokens', None) or 0
             
             # New SDK might use input/output terminology
             if not prompt_tokens:
                 prompt_tokens = getattr(metadata, 'input_tokens', None) or 0
-            if not completion_tokens:
-                completion_tokens = getattr(metadata, 'output_tokens', None) or 0
+            if not answer_tokens:
+                answer_tokens = getattr(metadata, 'output_tokens', None) or 0
         
         # Ensure we have integers (handle any remaining None values)
         prompt_tokens = int(prompt_tokens) if prompt_tokens else 0
-        completion_tokens = int(completion_tokens) if completion_tokens else 0
+        answer_tokens = int(answer_tokens) if answer_tokens else 0
         total_tokens = int(total_tokens) if total_tokens else 0
         
         # Calculate total if not provided
         # Note: total_tokens includes thinking tokens for Gemini 2.5 Flash
         if not total_tokens:
-            total_tokens = prompt_tokens + completion_tokens + reasoning_tokens
+            total_tokens = prompt_tokens + answer_tokens + reasoning_tokens
+        
+        # Calculate output_tokens = reasoning_tokens + answer_tokens
+        output_tokens = reasoning_tokens + answer_tokens
         
         return TokenUsage(
             prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
+            answer_tokens=answer_tokens,
             reasoning_tokens=reasoning_tokens,  # Gemini 2.5 Flash has thinking tokens
+            output_tokens=output_tokens,
             total_tokens=total_tokens
         )
 

@@ -192,8 +192,9 @@ results/GSM8K_gpt-4_20241121_143022.json
       "correct": true,
       "tokens": {
         "prompt_tokens": 50,
-        "completion_tokens": 100,
+        "answer_tokens": 100,
         "reasoning_tokens": 0,
+        "output_tokens": 100,
         "total_tokens": 150
       },
       "latency": 2.5,
@@ -206,8 +207,9 @@ results/GSM8K_gpt-4_20241121_143022.json
     "accuracy": 85.0,
     "total_tokens": 150000,
     "total_prompt_tokens": 50000,
-    "total_completion_tokens": 100000,
+    "total_answer_tokens": 100000,
     "total_reasoning_tokens": 0,
+    "total_output_tokens": 100000,
     "avg_tokens_per_problem": 150.0,
     "avg_latency": 2.5,
     "total_duration": 250.0,

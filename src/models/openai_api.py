@@ -38,7 +38,7 @@ class OpenAIClient(BaseModelClient):
         Initialize OpenAI client.
         
         Args:
-            model: Model name (e.g., 'gpt-4', 'gpt-3.5-turbo', 'o1-preview')
+            model: Model name (e.g., 'gpt-5', 'o3')
             api_key: OpenAI API key
             base_url: Base URL for API (for compatible endpoints)
             timeout: Request timeout in seconds
@@ -102,18 +102,24 @@ class OpenAIClient(BaseModelClient):
             "temperature": temperature,
         }
         
-        # Handle reasoning models (o1, o3) vs standard models
+        # Handle reasoning models (gpt-5, o1, o3) vs standard models
         if self._is_reasoning_model():
-            # O1/O3 models use max_completion_tokens and reasoning_effort
+            # Reasoning models use max_completion_tokens and reasoning_effort
             request_params["max_completion_tokens"] = max_output_tokens
             
             if kwargs.get("reasoning_effort"):
                 request_params["reasoning_effort"] = kwargs["reasoning_effort"]
             
-            # O1 models don't support temperature and some other parameters
-            # Remove temperature for these models
-            if "o1" in self.model.lower():
-                request_params.pop("temperature", None)
+            # Reasoning models (gpt-5, o1, o3) don't support temperature, top_p, top_k, 
+            # repeat_penalty and other sampling parameters
+            # Remove these parameters for all reasoning models
+            request_params.pop("temperature", None)
+            request_params.pop("top_p", None)
+            request_params.pop("top_k", None)
+            request_params.pop("repeat_penalty", None)
+            # Remove any other sampling-related parameters that might be in kwargs
+            for param in ["top_p", "top_k", "repeat_penalty", "frequency_penalty", "presence_penalty"]:
+                kwargs.pop(param, None)
         else:
             # Standard models use max_tokens
             request_params["max_tokens"] = max_output_tokens
@@ -121,6 +127,12 @@ class OpenAIClient(BaseModelClient):
             # Add optional parameters for standard models
             if kwargs.get("top_p") is not None:
                 request_params["top_p"] = kwargs["top_p"]
+            if kwargs.get("top_k") is not None:
+                request_params["top_k"] = kwargs["top_k"]
+            if kwargs.get("frequency_penalty") is not None:
+                request_params["frequency_penalty"] = kwargs["frequency_penalty"]
+            if kwargs.get("presence_penalty") is not None:
+                request_params["presence_penalty"] = kwargs["presence_penalty"]
         
         # Make API call
         try:
@@ -161,7 +173,7 @@ class OpenAIClient(BaseModelClient):
         prompt_tokens = getattr(usage, 'prompt_tokens', 0)
         completion_tokens = getattr(usage, 'completion_tokens', 0)
         
-        # Reasoning tokens (for o1/o3 models)
+        # Reasoning tokens (for o1/o3/gpt-5 models)
         # These models may have completion_tokens_details with reasoning_tokens
         reasoning_tokens = 0
         if hasattr(usage, 'completion_tokens_details'):
@@ -169,20 +181,29 @@ class OpenAIClient(BaseModelClient):
             if details and hasattr(details, 'reasoning_tokens'):
                 reasoning_tokens = details.reasoning_tokens or 0
         
+        # For reasoning models, completion_tokens is the TOTAL output (includes reasoning)
+        # So answer_tokens = completion_tokens - reasoning_tokens
+        # For non-reasoning models, reasoning_tokens is 0, so answer_tokens = completion_tokens
+        answer_tokens = completion_tokens - reasoning_tokens
+        
+        # output_tokens = reasoning_tokens + answer_tokens = completion_tokens
+        output_tokens = completion_tokens
+        
         return TokenUsage(
             prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
+            answer_tokens=answer_tokens,
             reasoning_tokens=reasoning_tokens,
+            output_tokens=output_tokens,
             total_tokens=getattr(usage, 'total_tokens', 0)
         )
     
     def _is_reasoning_model(self) -> bool:
         """
-        Check if model is a reasoning model (o1, o3).
+        Check if model is a reasoning model (o1, o3, gpt-5).
         
         Returns:
             bool: True if reasoning model
         """
         model_lower = self.model.lower()
-        return any(prefix in model_lower for prefix in ['o1', 'o3'])
+        return any(prefix in model_lower for prefix in ['o1', 'o3', 'gpt-5'])
 

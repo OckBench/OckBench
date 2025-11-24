@@ -252,8 +252,9 @@ class BenchmarkRunner:
                     correct=False,
                     tokens=TokenUsage(
                         prompt_tokens=0,
-                        completion_tokens=0,
+                        answer_tokens=0,
                         reasoning_tokens=0,
+                        output_tokens=0,
                         total_tokens=0
                     ),
                     latency=0,
@@ -315,8 +316,9 @@ class BenchmarkRunner:
         accuracy = (correct_count / total_problems * 100) if total_problems > 0 else 0
         
         total_prompt_tokens = sum(r.tokens.prompt_tokens for r in results)
-        total_completion_tokens = sum(r.tokens.completion_tokens for r in results)
+        total_answer_tokens = sum(r.tokens.answer_tokens for r in results)
         total_reasoning_tokens = sum(r.tokens.reasoning_tokens for r in results)
+        total_output_tokens = sum(r.tokens.output_tokens for r in results)
         total_tokens = sum(r.tokens.total_tokens for r in results)
         
         avg_tokens = total_tokens / total_problems if total_problems > 0 else 0
@@ -330,8 +332,9 @@ class BenchmarkRunner:
             accuracy=accuracy,
             total_tokens=total_tokens,
             total_prompt_tokens=total_prompt_tokens,
-            total_completion_tokens=total_completion_tokens,
+            total_answer_tokens=total_answer_tokens,
             total_reasoning_tokens=total_reasoning_tokens,
+            total_output_tokens=total_output_tokens,
             avg_tokens_per_problem=avg_tokens,
             avg_latency=avg_latency,
             total_duration=duration,
@@ -390,8 +393,9 @@ class BenchmarkRunner:
         logger.info(f"Accuracy: {summary.accuracy:.2f}% ({summary.correct_count}/{summary.total_problems})")
         logger.info(f"Total Tokens: {summary.total_tokens:,}")
         logger.info(f"  - Prompt: {summary.total_prompt_tokens:,}")
-        logger.info(f"  - Completion: {summary.total_completion_tokens:,}")
+        logger.info(f"  - Answer: {summary.total_answer_tokens:,}")
         logger.info(f"  - Reasoning: {summary.total_reasoning_tokens:,}")
+        logger.info(f"  - Output: {summary.total_output_tokens:,}")
         logger.info(f"Avg Tokens/Problem: {summary.avg_tokens_per_problem:.1f}")
         logger.info(f"Avg Latency: {summary.avg_latency:.2f}s")
         logger.info(f"Total Duration: {summary.total_duration:.2f}s")
