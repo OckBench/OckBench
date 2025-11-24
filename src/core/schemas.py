@@ -60,15 +60,22 @@ class TokenUsage(BaseModel):
     """Token usage information from API response."""
     
     prompt_tokens: int = Field(0, description="Input/prompt tokens")
-    completion_tokens: int = Field(0, description="Output/completion tokens")
+    answer_tokens: int = Field(0, description="Answer/output tokens")
     reasoning_tokens: int = Field(0, description="Reasoning tokens (for o1/o3 models)")
+    output_tokens: int = Field(0, description="Total output tokens (reasoning + answer)")
     total_tokens: int = Field(0, description="Total tokens used")
     
     def __init__(self, **data):
+        # Handle backward compatibility: old files might have completion_tokens
+        if 'completion_tokens' in data and 'answer_tokens' not in data:
+            data['answer_tokens'] = data.pop('completion_tokens')
         super().__init__(**data)
+        # Auto-calculate output_tokens if not provided
+        if self.output_tokens == 0:
+            self.output_tokens = self.reasoning_tokens + self.answer_tokens
         # Auto-calculate total if not provided
         if self.total_tokens == 0:
-            self.total_tokens = self.prompt_tokens + self.completion_tokens + self.reasoning_tokens
+            self.total_tokens = self.prompt_tokens + self.answer_tokens + self.reasoning_tokens
 
 
 class ModelResponse(BaseModel):
@@ -118,8 +125,9 @@ class ExperimentSummary(BaseModel):
     
     total_tokens: int = Field(..., description="Total tokens used")
     total_prompt_tokens: int = Field(..., description="Total prompt tokens")
-    total_completion_tokens: int = Field(..., description="Total completion tokens")
+    total_answer_tokens: int = Field(..., description="Total answer tokens")
     total_reasoning_tokens: int = Field(..., description="Total reasoning tokens")
+    total_output_tokens: int = Field(..., description="Total output tokens (reasoning + answer)")
     
     avg_tokens_per_problem: float = Field(..., description="Average tokens per problem")
     avg_latency: float = Field(..., description="Average latency per problem")
@@ -127,6 +135,17 @@ class ExperimentSummary(BaseModel):
     total_duration: float = Field(..., description="Total experiment duration in seconds")
     
     error_count: int = Field(0, description="Number of errors encountered")
+    
+    def __init__(self, **data):
+        # Handle backward compatibility: old files might have total_completion_tokens
+        if 'total_completion_tokens' in data and 'total_answer_tokens' not in data:
+            data['total_answer_tokens'] = data.pop('total_completion_tokens')
+        # Calculate total_output_tokens if not provided (for backward compatibility)
+        if 'total_output_tokens' not in data or data.get('total_output_tokens') == 0:
+            total_answer = data.get('total_answer_tokens', 0)
+            total_reasoning = data.get('total_reasoning_tokens', 0)
+            data['total_output_tokens'] = total_answer + total_reasoning
+        super().__init__(**data)
 
 
 class ExperimentResult(BaseModel):

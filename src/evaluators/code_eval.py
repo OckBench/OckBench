@@ -31,6 +31,9 @@ class CodeEvaluator:
         """
         self.timeout = timeout
         self.extraction_patterns = [
+            # Pattern 0: Solution tags (explicit format requested in prompt)
+            (r'<solution>\s*(.*?)\s*</solution>', 'solution_tags', re.DOTALL),
+            
             # Pattern 1: Python code block with language hint
             (r'```python\s*\n(.*?)\n```', 'markdown_python', re.DOTALL),
             

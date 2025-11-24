@@ -117,14 +117,16 @@ class MBPPDataLoader(DataLoader):
     """
     Loader for MBPP (Mostly Basic Python Problems) format datasets.
     
+    Now uses standard format with metadata containing test cases.
     Expected format: Each line is a JSON object with fields:
-    - doc_id: int (problem identifier)
-    - doc: dict with:
-        - task_id: int
-        - text: str (problem description)
-        - code: str (reference solution)
+    - problem: str (problem description)
+    - answer: str (reference solution code)
+    - id: int (problem identifier)
+    - metadata: dict with:
+        - test_cases: list[str] (all test assertions)
         - test_list: list[str] (basic test assertions)
         - challenge_test_list: list[str] (additional test assertions)
+        - reference_code: str (reference solution)
     """
     
     def __init__(self, filepath: str):
@@ -157,46 +159,71 @@ class MBPPDataLoader(DataLoader):
                 try:
                     data = json.loads(line)
                     
-                    # Handle MBPP format with nested 'doc' field
-                    if 'doc' in data:
-                        doc = data['doc']
-                        task_id = doc.get('task_id', data.get('doc_id', line_num))
-                        text = doc.get('text', '')
-                        code = doc.get('code', '')
-                        test_list = doc.get('test_list', [])
-                        challenge_test_list = doc.get('challenge_test_list', [])
+                    # Handle standard format (new format)
+                    if 'problem' in data and 'answer' in data:
+                        # Standard format - use directly
+                        problem_text = data.get('problem', '')
+                        answer = data.get('answer', '')
+                        problem_id = data.get('id', line_num)
+                        metadata = data.get('metadata', {})
+                        
+                        # Ensure test_cases are in metadata
+                        if 'test_cases' not in metadata:
+                            test_list = metadata.get('test_list', [])
+                            challenge_test_list = metadata.get('challenge_test_list', [])
+                            metadata['test_cases'] = test_list + challenge_test_list
+                        
+                        # Enhance problem text with test cases to show expected function signature
+                        enhanced_text = problem_text
+                        test_list = metadata.get('test_list', [])
+                        if test_list:
+                            enhanced_text += "\n\nYour code should pass these tests:\n"
+                            for test in test_list[:3]:  # Show first 3 tests
+                                enhanced_text += f"  {test}\n"
+                        
+                        problem = Problem(
+                            problem=enhanced_text,
+                            answer=answer,
+                            id=problem_id,
+                            metadata=metadata
+                        )
+                        problems.append(problem)
                     else:
-                        # Handle flat format
-                        task_id = data.get('task_id', data.get('id', line_num))
-                        text = data.get('text', data.get('problem', ''))
-                        code = data.get('code', '')
-                        test_list = data.get('test_list', [])
-                        challenge_test_list = data.get('challenge_test_list', [])
-                    
-                    # Combine all test cases
-                    all_tests = test_list + challenge_test_list
-                    
-                    # Enhance problem text with test cases to show expected function signature
-                    enhanced_text = text
-                    if test_list:
-                        enhanced_text += "\n\nYour code should pass these tests:\n"
-                        for test in test_list[:3]:  # Show first 3 tests
-                            enhanced_text += f"  {test}\n"
-                    
-                    # Create Problem object
-                    problem = Problem(
-                        problem=enhanced_text,
-                        answer=code,  # Reference solution (not used for evaluation)
-                        id=task_id,
-                        metadata={
-                            'test_cases': all_tests,
-                            'test_list': test_list,
-                            'challenge_test_list': challenge_test_list,
-                            'reference_code': code,
-                            'original_text': text
-                        }
-                    )
-                    problems.append(problem)
+                        # Handle old nested format (backward compatibility)
+                        if 'doc' in data:
+                            doc = data['doc']
+                            task_id = doc.get('task_id', data.get('doc_id', line_num))
+                            text = doc.get('text', '')
+                            code = doc.get('code', '')
+                            test_list = doc.get('test_list', [])
+                            challenge_test_list = doc.get('challenge_test_list', [])
+                        else:
+                            task_id = data.get('task_id', data.get('id', line_num))
+                            text = data.get('text', data.get('problem', ''))
+                            code = data.get('code', '')
+                            test_list = data.get('test_list', [])
+                            challenge_test_list = data.get('challenge_test_list', [])
+                        
+                        all_tests = test_list + challenge_test_list
+                        enhanced_text = text
+                        if test_list:
+                            enhanced_text += "\n\nYour code should pass these tests:\n"
+                            for test in test_list[:3]:
+                                enhanced_text += f"  {test}\n"
+                        
+                        problem = Problem(
+                            problem=enhanced_text,
+                            answer=code,
+                            id=task_id,
+                            metadata={
+                                'test_cases': all_tests,
+                                'test_list': test_list,
+                                'challenge_test_list': challenge_test_list,
+                                'reference_code': code,
+                                'original_text': text
+                            }
+                        )
+                        problems.append(problem)
                     
                 except json.JSONDecodeError as e:
                     raise ValueError(f"Invalid JSON at line {line_num}: {e}")

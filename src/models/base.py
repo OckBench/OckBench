@@ -180,8 +180,9 @@ class BaseModelClient(ABC):
             text="",
             tokens=TokenUsage(
                 prompt_tokens=0,
-                completion_tokens=0,
+                answer_tokens=0,
                 reasoning_tokens=0,
+                output_tokens=0,
                 total_tokens=0
             ),
             latency=latency,
