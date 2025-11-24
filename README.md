@@ -1,11 +1,12 @@
 # OckBench
 
-A powerful LLM benchmarking tool for measuring both **output token count** and **accuracy** on tasks requiring heavy reasoning, such as mathematics, coding, and more.
+A powerful LLM benchmarking tool for measuring both **efficiency (token count)** and **accuracy** of models on tasks requiring heavy reasoning, such as mathematics, coding, and more. OckBench helps you evaluate how efficiently models solve problems by tracking detailed token usage while simultaneously measuring their accuracy.
 
 ## Features
 
 - 🚀 **API-Based Benchmarking**: Support for OpenAI, Gemini, and OpenAI-compatible APIs (vLLM, SGLang, etc.)
-- 📊 **Token Counting**: Detailed token usage tracking (input, output, reasoning tokens)
+- 📊 **Efficiency Measurement**: Detailed token usage tracking (input, output, reasoning tokens) to measure model efficiency
+- ✅ **Accuracy Measurement**: Robust evaluation with multiple extraction patterns and code execution for coding tasks
 - 🎯 **Output Format Enforcement**: Optional instructions to guide models to format answers consistently (improves extraction accuracy by 40%+)
 - 🧠 **Robust Answer Extraction**: 10+ regex patterns for math problems, multi-pattern code extraction for coding problems
 - 💻 **Code Evaluation**: Subprocess-based code execution with timeout protection, test validation, and Pass@1 metrics
@@ -34,7 +35,7 @@ pip install -r requirements.txt
 export OPENAI_API_KEY=sk-xxx
 
 # Run with config file
-python main.py --config configs/gsm8k_openai.yaml
+python main.py --config configs/your_config.yaml
 ```
 
 ### Using Command Line Arguments
@@ -42,7 +43,7 @@ python main.py --config configs/gsm8k_openai.yaml
 ```bash
 # OpenAI API
 python main.py \
-  --dataset data/GSM8K.jsonl \
+  --dataset data/OckBench_math.jsonl \
   --provider openai \
   --model gpt-4 \
   --api-key sk-xxx \
@@ -52,14 +53,14 @@ python main.py \
 # Gemini API
 export GEMINI_API_KEY=your-key
 python main.py \
-  --dataset data/AIME25.jsonl \
+  --dataset data/OckBench_math.jsonl \
   --provider gemini \
   --model gemini-2.0-flash-exp \
   --concurrency 5
 
 # Local vLLM/SGLang server
 python main.py \
-  --dataset data/GSM8K.jsonl \
+  --dataset data/OckBench_math.jsonl \
   --provider generic \
   --model Qwen/Qwen2.5-7B-Instruct \
   --base-url http://localhost:8000/v1 \
@@ -72,8 +73,8 @@ python main.py \
 
 ```yaml
 # Dataset configuration
-dataset_path: data/GSM8K.jsonl
-dataset_name: GSM8K
+dataset_path: data/OckBench_math.jsonl
+dataset_name: OckBench_math
 
 # Model configuration
 provider: openai  # openai, gemini, or generic
@@ -141,7 +142,7 @@ Datasets should be in JSONL format:
 {"problem": "Question text here", "answer": 42, "id": 1}
 ```
 
-**Coding Problems (MBPP format):**
+**Coding Problems (OckBench_coding format):**
 ```json
 {
   "doc_id": 0,
@@ -155,7 +156,7 @@ Datasets should be in JSONL format:
 }
 ```
 
-Auto-detects format based on filename (contains 'mbpp') or structure.
+Auto-detects format based on filename (contains 'coding') or structure.
 
 ## Answer Extraction
 
@@ -163,7 +164,7 @@ The tool uses multiple patterns to extract answers from model responses:
 
 1. **LaTeX boxed**: `\boxed{answer}`
 2. **XML tags**: `<answer>value</answer>`
-3. **GSM8K marker**: `#### answer`
+3. **Marker patterns**: `#### answer`
 4. **Keyword patterns**: "The answer is X", "Final answer: X"
 5. **Last number**: Falls back to the last number in the response
 
@@ -174,7 +175,7 @@ This ensures compatibility with different model output formats.
 Results are saved as JSON files in the `results/` directory:
 
 ```
-results/GSM8K_gpt-4_20241121_143022.json
+results/OckBench_math_gpt-4_20241121_143022.json
 ```
 
 ### Result Format
@@ -216,7 +217,7 @@ results/GSM8K_gpt-4_20241121_143022.json
     "error_count": 0
   },
   "timestamp": "2024-11-21T14:30:22.123456",
-  "dataset_name": "GSM8K"
+  "dataset_name": "OckBench_math"
 }
 ```
 
@@ -224,12 +225,8 @@ results/GSM8K_gpt-4_20241121_143022.json
 
 The repository includes example configs in `configs/`:
 
-- `gsm8k_openai.yaml`: GSM8K with OpenAI GPT-4
-- `aime25.yaml`: AIME25 with OpenAI
-- `aime25_gemini.yaml`: AIME25 with Gemini
 - `local_vllm.yaml`: Local vLLM/SGLang server
 - `o1_reasoning.yaml`: OpenAI O1 with reasoning effort
-- `mbpp.yaml`: MBPP coding benchmark
 
 ## Advanced Usage
 
@@ -257,7 +254,7 @@ max_output_tokens = max_context_window - input_tokens - safety_buffer(100)
 **Command line:**
 ```bash
 python main.py \
-  --dataset data/AIME25.jsonl \
+  --dataset data/OckBench_math.jsonl \
   --provider openai \
   --model gpt-4-turbo \
   --max-context-window 128000
@@ -276,7 +273,7 @@ enforce_output_format: true
 
 Or via command line:
 ```bash
-python main.py --config configs/aime24.yaml --enforce-format
+python main.py --config configs/your_config.yaml --enforce-format
 ```
 
 **How it works**: Prepends a short instruction like "After solving the problem, clearly state your final answer at the end in the format: 'The answer is [NUMBER].'"
@@ -293,7 +290,7 @@ custom_format_instruction: "Please end your response with: Answer = X"
 
 ```bash
 python main.py \
-  --config configs/gsm8k_openai.yaml \
+  --config configs/your_config.yaml \
   --concurrency 20 \
   --temperature 0.7
 ```
@@ -302,7 +299,7 @@ python main.py \
 
 ```bash
 python main.py \
-  --dataset data/AIME25.jsonl \
+  --dataset data/OckBench_math.jsonl \
   --provider openai \
   --model o1-preview \
   --max-output-tokens 16384 \
@@ -310,18 +307,90 @@ python main.py \
   --concurrency 3
 ```
 
-### Local vLLM Server
+### Local Model Usage
 
-First, start your vLLM server:
+OckBench supports local models through OpenAI-compatible APIs, such as vLLM, SGLang, or any other local serving solution.
 
+#### Setting Up a Local vLLM Server
+
+1. **Install vLLM** (if not already installed):
 ```bash
-vllm serve Qwen/Qwen2.5-7B-Instruct --port 8000
+pip install vllm
 ```
 
-Then run the benchmark:
+2. **Start the vLLM server**:
+```bash
+# Basic usage
+vllm serve Qwen/Qwen2.5-7B-Instruct --port 8000
 
+# With GPU specification
+vllm serve Qwen/Qwen2.5-7B-Instruct --port 8000 --gpu-memory-utilization 0.9
+
+# With tensor parallelism for multi-GPU
+vllm serve Qwen/Qwen2.5-7B-Instruct --port 8000 --tensor-parallel-size 2
+```
+
+3. **Run the benchmark** using the config file:
 ```bash
 python main.py --config configs/local_vllm.yaml
+```
+
+Or via command line:
+```bash
+python main.py \
+  --dataset data/OckBench_math.jsonl \
+  --provider generic \
+  --model Qwen/Qwen2.5-7B-Instruct \
+  --base-url http://localhost:8000/v1 \
+  --api-key dummy \
+  --concurrency 20
+```
+
+#### Setting Up Other Local Servers
+
+**SGLang:**
+```bash
+# Start SGLang server
+python -m sglang.launch_server \
+  --model-path Qwen/Qwen2.5-7B-Instruct \
+  --port 8000
+
+# Run benchmark (same as vLLM)
+python main.py \
+  --dataset data/OckBench_math.jsonl \
+  --provider generic \
+  --model Qwen/Qwen2.5-7B-Instruct \
+  --base-url http://localhost:8000/v1
+```
+
+**Other OpenAI-compatible servers:**
+Any server that implements the OpenAI Chat Completions API can be used:
+```bash
+python main.py \
+  --dataset data/OckBench_math.jsonl \
+  --provider generic \
+  --model your-model-name \
+  --base-url http://localhost:8000/v1 \
+  --api-key your-api-key-if-needed
+```
+
+#### Local Model Configuration Tips
+
+- **Higher concurrency**: Local servers can typically handle much higher concurrency (50-200+) compared to cloud APIs
+- **Longer timeouts**: Local models may need more time, especially for complex problems (set `timeout: 3000` or higher)
+- **API key**: Many local servers accept any API key or use `dummy` as a placeholder
+- **Context window**: Set `max_context_window` to match your model's capabilities for optimal token usage
+- **Model name**: Use the exact model identifier that your server expects
+
+Example local model config (`configs/local_vllm.yaml`):
+```yaml
+provider: generic
+model: Qwen/Qwen2.5-7B-Instruct
+base_url: http://localhost:8000/v1
+api_key: dummy
+concurrency: 200  # Higher for local
+timeout: 3000     # Longer timeout
+max_context_window: 32768  # Match your model
 ```
 
 ## Token Limits and Context Windows
@@ -334,7 +403,7 @@ You don't need to manually calculate `input + output < context_limit` — the AP
 
 - [ ] Local batch processing with vLLM/SGLang (non-API mode)
 - [ ] HuggingFace dataset integration
-- [x] Code execution evaluator for coding tasks (MBPP, HumanEval)
+- [x] Code execution evaluator for coding tasks (OckBench_coding)
 - [ ] Support for more coding formats (HumanEval, APPS)
 - [ ] Support for more evaluation metrics
 - [ ] Result comparison and analysis tools
