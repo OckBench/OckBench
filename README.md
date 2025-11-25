@@ -2,18 +2,20 @@
 
 A powerful LLM benchmarking tool for measuring both **efficiency (token count)** and **accuracy** of models on tasks requiring heavy reasoning, such as mathematics, coding, and more. OckBench helps you evaluate how efficiently models solve problems by tracking detailed token usage while simultaneously measuring their accuracy.
 
+![Efficiency vs Accuracy Tradeoff](teaser.png)
+
+*OckBench visualizes the efficiency-accuracy tradeoff across different models, helping you understand which models achieve the best balance between token usage and problem-solving accuracy.*
+
 ## Features
 
-- 🚀 **API-Based Benchmarking**: Support for OpenAI, Gemini, and OpenAI-compatible APIs (vLLM, SGLang, etc.)
-- 📊 **Efficiency Measurement**: Detailed token usage tracking (input, output, reasoning tokens) to measure model efficiency
-- ✅ **Accuracy Measurement**: Robust evaluation with multiple extraction patterns and code execution for coding tasks
-- 🎯 **Output Format Enforcement**: Optional instructions to guide models to format answers consistently (improves extraction accuracy by 40%+)
-- 🧠 **Robust Answer Extraction**: 10+ regex patterns for math problems, multi-pattern code extraction for coding problems
-- 💻 **Code Evaluation**: Subprocess-based code execution with timeout protection, test validation, and Pass@1 metrics
-- ⚡ **Concurrent Execution**: Asynchronous API calls with configurable concurrency and rate limiting
-- 🔄 **Automatic Retries**: Exponential backoff retry logic for reliable benchmarking
+- 📊 **Dual Measurement**: Track both **efficiency (token count)** and **accuracy** in a single benchmark
+- 🚀 **Multi-Provider Support**: OpenAI, Gemini, and any OpenAI-compatible API (vLLM, SGLang, local models)
+- 🎯 **Format Enforcement**: Optional instructions to guide models for consistent output (improves extraction accuracy by 40%+)
+- 🧠 **Robust Extraction**: 10+ regex patterns for math, multi-pattern code extraction for coding tasks
+- 💻 **Code Evaluation**: Safe subprocess execution with timeout protection and Pass@1 metrics
+- ⚡ **High Performance**: Asynchronous API calls with configurable concurrency
 - 📈 **Dynamic Token Management**: Automatic `max_output_tokens` calculation based on context window size
-- 💾 **Comprehensive Logging**: Detailed experiment results with token usage, latency, and error tracking
+- 💾 **Comprehensive Results**: Detailed JSON outputs with token usage, latency, and error tracking
 
 ## Installation
 
@@ -28,48 +30,92 @@ pip install -r requirements.txt
 
 ## Quick Start
 
-### Using Config Files
+### Commercial API Example (OpenAI)
 
 ```bash
 # Set API key
 export OPENAI_API_KEY=sk-xxx
 
 # Run with config file
-python main.py --config configs/your_config.yaml
+python main.py --config configs/ockbench_math_openai.yaml
 ```
 
-### Using Command Line Arguments
+### Local Model Example
 
 ```bash
-# OpenAI API
+# 1. Start vLLM server (in another terminal)
+vllm serve Qwen/Qwen3-4B --port 8000
+
+# 2. Run benchmark
+python main.py --config configs/ockbench_math_local.yaml
+```
+
+## Examples
+
+### Commercial APIs
+
+**OpenAI (Math):**
+```bash
 python main.py \
   --dataset data/OckBench_math.jsonl \
   --provider openai \
-  --model gpt-4 \
+  --model gpt-5 \
   --api-key sk-xxx \
-  --temperature 0.0 \
   --concurrency 10
+```
 
-# Gemini API
+**Gemini (Math):**
+```bash
 export GEMINI_API_KEY=your-key
 python main.py \
   --dataset data/OckBench_math.jsonl \
   --provider gemini \
-  --model gemini-2.0-flash-exp \
+  --model gemini-2.5-flash \
   --concurrency 5
+```
 
-# Local vLLM/SGLang server
+**OpenAI (Coding):**
+```bash
+python main.py --config configs/ockbench_coding_openai.yaml
+```
+
+### Local Models
+
+**Using vLLM:**
+```bash
+# Start server
+vllm serve Qwen/Qwen3-4B --port 8000
+
+# Run benchmark
 python main.py \
   --dataset data/OckBench_math.jsonl \
   --provider generic \
-  --model Qwen/Qwen2.5-7B-Instruct \
+  --model Qwen/Qwen3-4B \
   --base-url http://localhost:8000/v1 \
-  --concurrency 20
+  --api-key dummy \
+  --concurrency 200
+```
+
+**Using SGLang:**
+```bash
+# Start server
+python -m sglang.launch_server \
+  --model-path Qwen/Qwen3-4B \
+  --port 8000
+
+# Run benchmark (same as vLLM)
+python main.py \
+  --dataset data/OckBench_math.jsonl \
+  --provider generic \
+  --model Qwen/Qwen3-4B \
+  --base-url http://localhost:8000/v1
 ```
 
 ## Configuration
 
 ### Config File Format
+
+OckBench uses YAML configuration files for easy experiment management:
 
 ```yaml
 # Dataset configuration
@@ -78,17 +124,14 @@ dataset_name: OckBench_math
 
 # Model configuration
 provider: openai  # openai, gemini, or generic
-model: gpt-4
-api_key: sk-xxx  # Or use environment variable
-# base_url: http://localhost:8000/v1  # For generic provider
+model: gpt-5
+# api_key: sk-xxx  # Or use environment variable
 
 # Generation parameters
 temperature: 0.0
-max_output_tokens: 2048
+max_output_tokens: 4096
 # OR use max_context_window for dynamic calculation:
 # max_context_window: 128000  # Calculates max_output per problem
-# reasoning_effort: high  # For o1/o3 models
-# top_p: 0.95
 
 # Runtime configuration
 concurrency: 10
@@ -97,18 +140,30 @@ max_retries: 3
 
 # Evaluation configuration
 evaluator_type: math  # 'math' or 'code'
-enforce_output_format: false  # NEW: Guide models to format answers consistently
-# custom_format_instruction: "..."  # Optional custom instruction
+enforce_output_format: true  # Recommended: improves extraction accuracy
 
 # Code evaluation specific (when evaluator_type: code)
 execution_timeout: 5  # Timeout for code execution in seconds
 include_challenge_tests: true  # Include challenge test cases
 ```
 
+### Example Configs
+
+The repository includes ready-to-use configs in `configs/`:
+
+- **Commercial APIs:**
+  - `ockbench_math_openai.yaml` - OpenAI API for math problems
+  - `ockbench_math_gemini.yaml` - Gemini API for math problems
+  - `ockbench_coding_openai.yaml` - OpenAI API for coding problems
+
+- **Local Models:**
+  - `ockbench_math_local.yaml` - Local vLLM/SGLang for math
+  - `ockbench_coding_local.yaml` - Local vLLM/SGLang for coding
+
 ### Supported Providers
 
-1. **OpenAI**: Official OpenAI API (GPT-4, GPT-3.5, O1, O3, etc.)
-2. **Gemini**: Google Gemini API (Gemini Pro, Gemini 1.5 Pro, Gemini 2.0 Flash, etc.)
+1. **OpenAI**: GPT-4, GPT-5, O1, O3, and other OpenAI models
+2. **Gemini**: Gemini 2.5 Flash, Gemini 2.0, Gemini 1.5 Pro, etc.
 3. **Generic**: Any OpenAI-compatible API (vLLM, SGLang, local serving)
 
 ### Environment Variables
@@ -116,33 +171,17 @@ include_challenge_tests: true  # Include challenge test cases
 - `OPENAI_API_KEY`: OpenAI API key
 - `GEMINI_API_KEY`: Google Gemini API key
 - `API_KEY`: Generic API key (for custom providers)
-- `API_BASE_URL`: Base URL for generic provider
-
-## Evaluation Types
-
-OckBench supports two types of evaluation:
-
-### Math Problems
-- Regex-based answer extraction (10+ patterns)
-- Handles various formats: LaTeX boxed, XML tags, natural language
-- Direct answer comparison
-
-### Coding Problems (NEW!)
-- Multi-pattern code extraction (markdown blocks, raw functions)
-- Safe subprocess execution with timeout protection
-- Test case validation with Pass@1 metrics
-- See [CODING_EXTENSION.md](CODING_EXTENSION.md) for details
 
 ## Dataset Format
 
-Datasets should be in JSONL format:
+### Math Problems
 
-**Math Problems:**
 ```json
 {"problem": "Question text here", "answer": 42, "id": 1}
 ```
 
-**Coding Problems (OckBench_coding format):**
+### Coding Problems
+
 ```json
 {
   "doc_id": 0,
@@ -158,27 +197,37 @@ Datasets should be in JSONL format:
 
 Auto-detects format based on filename (contains 'coding') or structure.
 
-## Answer Extraction
-
-The tool uses multiple patterns to extract answers from model responses:
-
-1. **LaTeX boxed**: `\boxed{answer}`
-2. **XML tags**: `<answer>value</answer>`
-3. **Marker patterns**: `#### answer`
-4. **Keyword patterns**: "The answer is X", "Final answer: X"
-5. **Last number**: Falls back to the last number in the response
-
-This ensures compatibility with different model output formats.
-
 ## Results
 
 Results are saved as JSON files in the `results/` directory:
 
 ```
-results/OckBench_math_gpt-4_20241121_143022.json
+results/OckBench_math_gpt-5_20241121_143022.json
+```
+
+### Result Summary
+
+After running a benchmark, you'll see a summary like:
+
+```
+EXPERIMENT SUMMARY
+================================================================================
+Dataset: OckBench_math
+Model: gpt-5
+Accuracy: 85.0% (850/1000)
+Total Tokens: 150,000
+  Prompt: 50,000
+  Answer: 100,000
+  Reasoning: 0
+  Output: 100,000
+Avg Tokens/Problem: 150.0
+Duration: 250.0s
+================================================================================
 ```
 
 ### Result Format
+
+The JSON output includes detailed information for each problem:
 
 ```json
 {
@@ -221,79 +270,42 @@ results/OckBench_math_gpt-4_20241121_143022.json
 }
 ```
 
-## Example Configs
-
-The repository includes example configs in `configs/`:
-
-- `local_vllm.yaml`: Local vLLM/SGLang server
-- `o1_reasoning.yaml`: OpenAI O1 with reasoning effort
-
 ## Advanced Usage
 
 ### Dynamic Output Tokens with max_context_window
 
-**NEW FEATURE**: Instead of setting a fixed `max_output_tokens`, you can specify the model's `max_context_window`, and the tool will automatically calculate the maximum output space for each problem based on its input length.
+Instead of setting a fixed `max_output_tokens`, specify the model's `max_context_window` for automatic calculation:
+
+```yaml
+model: gpt-4-turbo
+max_context_window: 128000  # GPT-4 Turbo's context window
+# max_output_tokens is automatically calculated per problem
+```
 
 **Benefits:**
 - Maximizes output space for each problem
 - Adapts to different problem lengths
 - Prevents context overflow automatically
 
-**Example config:**
-```yaml
-model: gpt-4-turbo
-max_context_window: 128000  # GPT-4 Turbo's context window
-# max_output_tokens is omitted
-```
-
 **How it works:**
 ```
 max_output_tokens = max_context_window - input_tokens - safety_buffer(100)
 ```
 
-**Command line:**
-```bash
-python main.py \
-  --dataset data/OckBench_math.jsonl \
-  --provider openai \
-  --model gpt-4-turbo \
-  --max-context-window 128000
-```
+### Output Format Enforcement
 
-See [MODEL_CONTEXT_WINDOWS.md](MODEL_CONTEXT_WINDOWS.md) for a reference of common model context windows.
-
-### Output Format Enforcement (Recommended!)
-
-Add a simple instruction at the start of each problem to guide consistent answer formatting:
+Improve answer extraction accuracy by guiding models to format answers consistently:
 
 ```yaml
-# In your config file
 enforce_output_format: true
 ```
 
 Or via command line:
 ```bash
-python main.py --config configs/your_config.yaml --enforce-format
+python main.py --config configs/ockbench_math_openai.yaml --enforce-format
 ```
-
-**How it works**: Prepends a short instruction like "After solving the problem, clearly state your final answer at the end in the format: 'The answer is [NUMBER].'"
 
 **Impact**: Can improve answer extraction accuracy by 40%+ without constraining the model's reasoning process.
-
-**Custom instructions:**
-```yaml
-enforce_output_format: true
-custom_format_instruction: "Please end your response with: Answer = X"
-```
-
-### Custom Concurrency and Temperature
-
-```bash
-python main.py \
-  --config configs/your_config.yaml \
-  --concurrency 20 \
-  --temperature 0.7
-```
 
 ### O1/O3 Reasoning Models
 
@@ -307,107 +319,36 @@ python main.py \
   --concurrency 3
 ```
 
-### Local Model Usage
+### Local Model Configuration Tips
 
-OckBench supports local models through OpenAI-compatible APIs, such as vLLM, SGLang, or any other local serving solution.
-
-#### Setting Up a Local vLLM Server
-
-1. **Install vLLM** (if not already installed):
-```bash
-pip install vllm
-```
-
-2. **Start the vLLM server**:
-```bash
-# Basic usage
-vllm serve Qwen/Qwen2.5-7B-Instruct --port 8000
-
-# With GPU specification
-vllm serve Qwen/Qwen2.5-7B-Instruct --port 8000 --gpu-memory-utilization 0.9
-
-# With tensor parallelism for multi-GPU
-vllm serve Qwen/Qwen2.5-7B-Instruct --port 8000 --tensor-parallel-size 2
-```
-
-3. **Run the benchmark** using the config file:
-```bash
-python main.py --config configs/local_vllm.yaml
-```
-
-Or via command line:
-```bash
-python main.py \
-  --dataset data/OckBench_math.jsonl \
-  --provider generic \
-  --model Qwen/Qwen2.5-7B-Instruct \
-  --base-url http://localhost:8000/v1 \
-  --api-key dummy \
-  --concurrency 20
-```
-
-#### Setting Up Other Local Servers
-
-**SGLang:**
-```bash
-# Start SGLang server
-python -m sglang.launch_server \
-  --model-path Qwen/Qwen2.5-7B-Instruct \
-  --port 8000
-
-# Run benchmark (same as vLLM)
-python main.py \
-  --dataset data/OckBench_math.jsonl \
-  --provider generic \
-  --model Qwen/Qwen2.5-7B-Instruct \
-  --base-url http://localhost:8000/v1
-```
-
-**Other OpenAI-compatible servers:**
-Any server that implements the OpenAI Chat Completions API can be used:
-```bash
-python main.py \
-  --dataset data/OckBench_math.jsonl \
-  --provider generic \
-  --model your-model-name \
-  --base-url http://localhost:8000/v1 \
-  --api-key your-api-key-if-needed
-```
-
-#### Local Model Configuration Tips
-
-- **Higher concurrency**: Local servers can typically handle much higher concurrency (50-200+) compared to cloud APIs
-- **Longer timeouts**: Local models may need more time, especially for complex problems (set `timeout: 3000` or higher)
+- **Higher concurrency**: Local servers can handle much higher concurrency (50-200+) compared to cloud APIs
+- **Longer timeouts**: Set `timeout: 3000` or higher for complex problems
 - **API key**: Many local servers accept any API key or use `dummy` as a placeholder
-- **Context window**: Set `max_context_window` to match your model's capabilities for optimal token usage
-- **Model name**: Use the exact model identifier that your server expects
+- **Context window**: Set `max_context_window` to match your model's capabilities
 
-Example local model config (`configs/local_vllm.yaml`):
-```yaml
-provider: generic
-model: Qwen/Qwen2.5-7B-Instruct
-base_url: http://localhost:8000/v1
-api_key: dummy
-concurrency: 200  # Higher for local
-timeout: 3000     # Longer timeout
-max_context_window: 32768  # Match your model
-```
+## Evaluation Types
 
-## Token Limits and Context Windows
+### Math Problems
+- Regex-based answer extraction (10+ patterns)
+- Handles various formats: LaTeX boxed, XML tags, natural language
+- Direct answer comparison
 
-The tool uses `max_output_tokens` to control the maximum number of tokens in the model's response. If the input exceeds the model's context window, the API will return an error, which will be caught and logged.
+### Coding Problems
+- Multi-pattern code extraction (markdown blocks, raw functions)
+- Safe subprocess execution with timeout protection
+- Test case validation with Pass@1 metrics
 
-You don't need to manually calculate `input + output < context_limit` — the API server handles this automatically.
+## Answer Extraction
 
-## Future Work
+The tool uses multiple patterns to extract answers from model responses:
 
-- [ ] Local batch processing with vLLM/SGLang (non-API mode)
-- [ ] HuggingFace dataset integration
-- [x] Code execution evaluator for coding tasks (OckBench_coding)
-- [ ] Support for more coding formats (HumanEval, APPS)
-- [ ] Support for more evaluation metrics
-- [ ] Result comparison and analysis tools
-- [ ] Web UI for experiment management
+1. **LaTeX boxed**: `\boxed{answer}`
+2. **XML tags**: `<answer>value</answer>`
+3. **Marker patterns**: `#### answer`
+4. **Keyword patterns**: "The answer is X", "Final answer: X"
+5. **Last number**: Falls back to the last number in the response
+
+This ensures compatibility with different model output formats.
 
 ## Project Structure
 

@@ -1,0 +1,33 @@
+# OckBench Coding - Local Model Example (vLLM/SGLang)
+# This config demonstrates benchmarking coding problems using a local model server
+
+# Dataset configuration
+dataset_path: data/OckBench_coding.jsonl
+dataset_name: OckBench_coding
+
+# Model configuration
+provider: generic  # Use generic for OpenAI-compatible APIs (vLLM, SGLang, etc.)
+model: Qwen/Qwen3-4B  # Model name on the server
+base_url: http://localhost:8000/v1  # vLLM/SGLang endpoint
+api_key: dummy  # Many local servers don't need a real key
+
+# Generation parameters
+temperature: 0.0
+max_context_window: 32768  # Match your model's context window
+# max_output_tokens: null  # Will be calculated from max_context_window
+
+# Runtime configuration
+concurrency: 200  # Can be much higher for local serving
+timeout: 3000  # Longer timeout for local models, especially for code generation
+max_retries: 2
+
+# Evaluation configuration
+evaluator_type: code  # Use code evaluator for coding problems
+enforce_output_format: true  # Guide model to use markdown code blocks
+execution_timeout: 10  # Timeout for code execution in seconds
+include_challenge_tests: true  # Include challenge test cases
+
+# Optional metadata
+experiment_name: ockbench_coding_qwen3_local
+notes: Testing Qwen3-4B via local vLLM server on OckBench coding problems
+
