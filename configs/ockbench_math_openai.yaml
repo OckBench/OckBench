@@ -1,0 +1,31 @@
+# OckBench Math - OpenAI API Example
+# This config demonstrates benchmarking math problems using OpenAI's API
+
+# Dataset configuration
+dataset_path: data/OckBench_math.jsonl
+dataset_name: OckBench_math
+
+# Model configuration
+provider: openai
+model: gpt-5  # Or use gpt-4, gpt-4-turbo, o1-preview, o3, etc.
+# api_key: sk-xxx  # Or use OPENAI_API_KEY environment variable
+
+# Generation parameters
+temperature: 0.0
+max_output_tokens: 4096
+# Alternative: use max_context_window for dynamic calculation
+# max_context_window: 128000  # Automatically calculates max_output_tokens per problem
+
+# Runtime configuration
+concurrency: 10
+timeout: 120
+max_retries: 3
+
+# Evaluation configuration
+evaluator_type: math
+enforce_output_format: true  # Recommended: improves answer extraction accuracy
+
+# Optional metadata
+experiment_name: ockbench_math_gpt5
+notes: Benchmarking GPT-5 on OckBench math problems
+

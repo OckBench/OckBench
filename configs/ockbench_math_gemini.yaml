@@ -1,0 +1,31 @@
+# OckBench Math - Google Gemini API Example
+# This config demonstrates benchmarking math problems using Google's Gemini API
+
+# Dataset configuration
+dataset_path: data/OckBench_math.jsonl
+dataset_name: OckBench_math
+
+# Model configuration
+provider: gemini
+model: gemini-2.5-flash  # Or use gemini-2.0-flash-exp, gemini-1.5-pro, etc.
+# api_key: your-key  # Or use GEMINI_API_KEY environment variable
+
+# Generation parameters
+temperature: 0.0
+max_output_tokens: 4096
+# Alternative: use max_context_window for dynamic calculation
+# max_context_window: 1000000  # Gemini 2.0 has 1M context window
+
+# Runtime configuration
+concurrency: 5  # Lower for Gemini API rate limits
+timeout: 120
+max_retries: 3
+
+# Evaluation configuration
+evaluator_type: math
+enforce_output_format: true  # Recommended: improves answer extraction accuracy
+
+# Optional metadata
+experiment_name: ockbench_math_gemini
+notes: Benchmarking Gemini 2.5 Flash on OckBench math problems
+

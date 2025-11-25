@@ -1,0 +1,33 @@
+# OckBench Coding - OpenAI API Example
+# This config demonstrates benchmarking coding problems using OpenAI's API
+
+# Dataset configuration
+dataset_path: data/OckBench_coding.jsonl
+dataset_name: OckBench_coding
+
+# Model configuration
+provider: openai
+model: gpt-5  # Or use gpt-4, gpt-4-turbo, o1-preview, o3, etc.
+# api_key: sk-xxx  # Or use OPENAI_API_KEY environment variable
+
+# Generation parameters
+temperature: 0.0
+max_output_tokens: 8192  # Higher for code generation
+# Alternative: use max_context_window for dynamic calculation
+# max_context_window: 128000  # Automatically calculates max_output_tokens per problem
+
+# Runtime configuration
+concurrency: 10
+timeout: 300  # Longer timeout for code generation
+max_retries: 3
+
+# Evaluation configuration
+evaluator_type: code  # Use code evaluator for coding problems
+enforce_output_format: true  # Guide model to use markdown code blocks
+execution_timeout: 10  # Timeout for code execution in seconds
+include_challenge_tests: true  # Include challenge test cases
+
+# Optional metadata
+experiment_name: ockbench_coding_gpt5
+notes: Benchmarking GPT-5 on OckBench coding problems
+
