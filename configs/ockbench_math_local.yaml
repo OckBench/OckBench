@@ -13,7 +13,7 @@ api_key: dummy  # Many local servers don't need a real key
 
 # Generation parameters
 temperature: 0.0
-max_context_window: 32768  # Match your model's context window
+max_context_window: 40960  # Match your model's context window
 # max_output_tokens: null  # Will be calculated from max_context_window
 
 # Runtime configuration

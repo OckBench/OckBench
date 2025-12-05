@@ -1,0 +1,26 @@
+defaults:
+  - provider: openai
+  - task: math
+  - _self_
+
+# Global Settings
+model_name: gpt-4o-mini
+model: ${model_name}
+
+# Output
+output_dir: results
+log_dir: null
+
+# Experiment Metadata
+experiment_name: null
+notes: null
+
+# Hydra Configuration
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+
+

@@ -99,8 +99,9 @@ class BenchmarkRunner:
                 # Rough estimate: ~4 chars per token
                 input_tokens = len(prompt) // 4
             
-            # Calculate available output tokens with safety buffer (100 tokens)
-            safety_buffer = 100
+            # Calculate available output tokens with safety buffer
+            # Buffer accounts for: chat template tokens, tokenizer differences, etc.
+            safety_buffer = 256
             max_output = self.config.max_context_window - input_tokens - safety_buffer
             
             # Ensure we have at least some minimum output space
@@ -136,22 +137,39 @@ class BenchmarkRunner:
         """
         async with semaphore:
             try:
-                # Calculate max_output_tokens (dynamic if max_context_window is set)
-                max_output_tokens = self._calculate_max_output_tokens(problem.problem)
-                
                 # Format the prompt with format enforcement if enabled
                 # This is what will actually be sent to the model
                 from ..utils.prompt_formatter import format_prompt
+                
+                # Get test cases for code evaluation (use test_list, not test_cases which includes challenge tests)
+                test_cases_for_prompt = None
+                if self.config.evaluator_type == "code":
+                    test_cases_for_prompt = problem.metadata.get('test_list', [])
+                
+                # Build problem with test cases (no format instruction yet - model client adds that)
+                problem_with_tests = format_prompt(
+                    problem=problem.problem,
+                    enforce_format=False,  # Don't add format instruction here
+                    evaluator_type=self.config.evaluator_type,
+                    test_cases=test_cases_for_prompt
+                )
+                
+                # The full formatted prompt (for saving in results AND for token estimation)
                 formatted_prompt = format_prompt(
                     problem=problem.problem,
                     enforce_format=self.config.enforce_output_format,
                     custom_instruction=self.config.custom_format_instruction,
-                    evaluator_type=self.config.evaluator_type
+                    evaluator_type=self.config.evaluator_type,
+                    test_cases=test_cases_for_prompt
                 )
                 
-                # Generate response
+                # Calculate max_output_tokens using the FULL formatted prompt
+                # (this is what actually gets sent to the model)
+                max_output_tokens = self._calculate_max_output_tokens(formatted_prompt)
+                
+                # Generate response - pass problem with test cases so model knows function names
                 response = await self.client.generate(
-                    prompt=problem.problem,
+                    prompt=problem_with_tests,
                     temperature=self.config.temperature,
                     max_output_tokens=max_output_tokens,
                     reasoning_effort=self.config.reasoning_effort,
@@ -234,11 +252,18 @@ class BenchmarkRunner:
                 
                 # Format prompt for error case too
                 from ..utils.prompt_formatter import format_prompt
+                
+                # Get test cases for code evaluation
+                test_cases_for_prompt = None
+                if self.config.evaluator_type == "code":
+                    test_cases_for_prompt = problem.metadata.get('test_list', [])
+                
                 formatted_prompt = format_prompt(
                     problem=problem.problem,
                     enforce_format=self.config.enforce_output_format,
                     custom_instruction=self.config.custom_format_instruction,
-                    evaluator_type=self.config.evaluator_type
+                    evaluator_type=self.config.evaluator_type,
+                    test_cases=test_cases_for_prompt
                 )
                 
                 # Return error result
