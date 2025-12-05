@@ -2,7 +2,7 @@
 Prompt formatting utilities for enforcing consistent output formats.
 """
 import logging
-from typing import Optional
+from typing import Optional, List
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,8 @@ def format_prompt(
     problem: str,
     enforce_format: bool = False,
     custom_instruction: Optional[str] = None,
-    evaluator_type: str = "math"
+    evaluator_type: str = "math",
+    test_cases: Optional[List[str]] = None
 ) -> str:
     """
     Format a problem prompt with optional format enforcement instructions.
@@ -26,12 +27,24 @@ def format_prompt(
         enforce_format: Whether to add format enforcement instructions
         custom_instruction: Custom format instruction (overrides default)
         evaluator_type: Type of evaluator ('math' or 'code')
+        test_cases: List of test case strings (for code evaluation)
     
     Returns:
         str: Formatted prompt
     """
+    # Build the problem text with test cases if provided
+    problem_text = problem
+    
+    # For code evaluation, append test cases if they're provided and not already in the problem
+    if evaluator_type == "code" and test_cases:
+        # Check if test cases are already included in the problem text
+        # (e.g., MBPP format already has them)
+        if "Your code should pass these tests:" not in problem and "assert " not in problem:
+            test_cases_str = "\n  ".join(test_cases)
+            problem_text = f"{problem}\n\nYour code should pass these tests:\n  {test_cases_str}"
+    
     if not enforce_format:
-        return problem
+        return problem_text
     
     # Use custom instruction if provided
     if custom_instruction:
@@ -44,8 +57,10 @@ def format_prompt(
             instruction = DEFAULT_FORMAT_INSTRUCTION
     
     # Simply prepend instruction to problem
-    formatted = f"{instruction}\n\n{problem}"
+    formatted = f"{instruction}\n\n{problem_text}"
     
     logger.debug(f"Formatted prompt with {evaluator_type} format enforcement instruction")
     return formatted
+
+
 

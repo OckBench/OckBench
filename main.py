@@ -2,248 +2,51 @@
 """
 OckBench - LLM Benchmarking Tool for Reasoning Tasks
 
-Main CLI entry point for running benchmarks.
+Main CLI entry point for running benchmarks using Hydra.
 """
-import argparse
 import sys
-from pathlib import Path
+import logging
+import hydra
+from omegaconf import DictConfig, OmegaConf
 
 from src.core.runner import run_benchmark
 
+logger = logging.getLogger(__name__)
 
-def parse_args():
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(
-        description="OckBench: Benchmark LLMs on reasoning tasks with token counting",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Run with config file
-  python main.py --config configs/aime25.yaml
-  
-  # Run with inline parameters
-  python main.py --dataset data/GSM8K.jsonl --provider openai --model gpt-4 --api-key sk-xxx
-  
-  # Run with environment variable for API key
-  export OPENAI_API_KEY=sk-xxx
-  python main.py --dataset data/GSM8K.jsonl --provider openai --model gpt-4
-  
-  # Run with custom concurrency and temperature
-  python main.py --config configs/gsm8k.yaml --concurrency 10 --temperature 0.7
-        """
-    )
-    
-    # Config file or inline parameters
-    parser.add_argument(
-        '--config',
-        type=str,
-        help='Path to YAML config file'
-    )
-    
-    # Dataset parameters
-    parser.add_argument(
-        '--dataset',
-        type=str,
-        help='Path to dataset file (JSONL format)'
-    )
-    parser.add_argument(
-        '--dataset-name',
-        type=str,
-        help='Name of dataset for logging (default: inferred from filename)'
-    )
-    
-    # Model parameters
-    parser.add_argument(
-        '--provider',
-        type=str,
-        choices=['openai', 'gemini', 'generic'],
-        help='API provider (openai, gemini, or generic for OpenAI-compatible)'
-    )
-    parser.add_argument(
-        '--model',
-        type=str,
-        help='Model name/identifier'
-    )
-    parser.add_argument(
-        '--base-url',
-        type=str,
-        help='Base URL for API (for generic/local providers)'
-    )
-    parser.add_argument(
-        '--api-key',
-        type=str,
-        help='API key (or use environment variables: OPENAI_API_KEY, GEMINI_API_KEY)'
-    )
-    
-    # Generation parameters
-    parser.add_argument(
-        '--temperature',
-        type=float,
-        help='Sampling temperature (default: 0.0)'
-    )
-    parser.add_argument(
-        '--max-output-tokens',
-        type=int,
-        help='Maximum output tokens (default: 4096, can be omitted if max-context-window is set)'
-    )
-    parser.add_argument(
-        '--max-context-window',
-        type=int,
-        help='Maximum context window (input + output). If set, max-output-tokens will be calculated dynamically per problem'
-    )
-    parser.add_argument(
-        '--reasoning-effort',
-        type=str,
-        help='Reasoning effort level for o1/o3 models (low, medium, high)'
-    )
-    parser.add_argument(
-        '--top-p',
-        type=float,
-        help='Nucleus sampling parameter'
-    )
-    
-    # Runtime parameters
-    parser.add_argument(
-        '--concurrency',
-        type=int,
-        help='Number of concurrent API requests (default: 5)'
-    )
-    parser.add_argument(
-        '--timeout',
-        type=int,
-        help='Request timeout in seconds (default: 120)'
-    )
-    parser.add_argument(
-        '--max-retries',
-        type=int,
-        help='Maximum retry attempts (default: 3)'
-    )
-    
-    # Evaluation parameters
-    parser.add_argument(
-        '--evaluator',
-        type=str,
-        default=None,
-        help='Evaluator type (default: from config or math)'
-    )
-    parser.add_argument(
-        '--enforce-format',
-        action='store_true',
-        help='Add instructions to prompt to enforce consistent output format (improves answer extraction)'
-    )
-    parser.add_argument(
-        '--format-instruction',
-        type=str,
-        help='Custom format instruction (overrides default)'
-    )
-    
-    # Output parameters
-    parser.add_argument(
-        '--output-dir',
-        type=str,
-        default='results',
-        help='Directory to save results (default: results)'
-    )
-    parser.add_argument(
-        '--log-dir',
-        type=str,
-        help='Directory to save logs (default: no log file)'
-    )
-    
-    # Metadata
-    parser.add_argument(
-        '--experiment-name',
-        type=str,
-        help='Custom experiment name'
-    )
-    parser.add_argument(
-        '--notes',
-        type=str,
-        help='Additional notes about the experiment'
-    )
-    
-    return parser.parse_args()
-
-
-def validate_args(args):
+@hydra.main(version_base=None, config_path="conf", config_name="config")
+def main(cfg: DictConfig) -> int:
     """
-    Validate command line arguments.
+    Main entry point for running benchmarks.
     
     Args:
-        args: Parsed arguments
-    
-    Raises:
-        ValueError: If arguments are invalid
+        cfg: Hydra configuration object
     """
-    # Must have either config file or required inline parameters
-    if not args.config:
-        required = ['dataset', 'provider', 'model']
-        missing = [arg for arg in required if not getattr(args, arg.replace('-', '_'))]
-        
-        if missing:
-            raise ValueError(
-                f"When not using --config, you must provide: {', '.join(['--' + m for m in missing])}"
-            )
-        
-        # Check dataset file exists
-        if not Path(args.dataset).exists():
-            raise ValueError(f"Dataset file not found: {args.dataset}")
-        
-        # Generic provider requires base_url
-        if args.provider == 'generic' and not args.base_url:
-            raise ValueError("--base-url is required when using --provider generic")
-
-
-def main():
-    """Main entry point."""
     try:
-        # Parse arguments
-        args = parse_args()
+        # Resolve config and convert to container
+        cfg_dict = OmegaConf.to_container(cfg, resolve=True)
         
-        # Validate arguments
-        validate_args(args)
+        # Note: Provider and task configs are merged into the global namespace via '# @package _global_'
+        # so no manual flattening is required.
         
-        # Build config overrides from CLI args
-        config_overrides = {}
+        # Resolve paths that are relative to project root
+        # Hydra changes the working directory, so we need to use absolute paths
+        if 'dataset_path' in cfg_dict and cfg_dict['dataset_path']:
+            cfg_dict['dataset_path'] = hydra.utils.to_absolute_path(cfg_dict['dataset_path'])
         
-        # Map CLI args to config fields
-        arg_mapping = {
-            'dataset': 'dataset_path',
-            'dataset_name': 'dataset_name',
-            'provider': 'provider',
-            'model': 'model',
-            'base_url': 'base_url',
-            'api_key': 'api_key',
-            'temperature': 'temperature',
-            'max_output_tokens': 'max_output_tokens',
-            'max_context_window': 'max_context_window',
-            'reasoning_effort': 'reasoning_effort',
-            'top_p': 'top_p',
-            'concurrency': 'concurrency',
-            'timeout': 'timeout',
-            'max_retries': 'max_retries',
-            'evaluator': 'evaluator_type',
-            'enforce_format': 'enforce_output_format',
-            'format_instruction': 'custom_format_instruction',
-            'experiment_name': 'experiment_name',
-            'notes': 'notes',
-        }
+        # Extract special args that are passed as arguments to run_benchmark
+        output_dir = cfg_dict.pop('output_dir', 'results')
+        log_dir = cfg_dict.pop('log_dir', None)
         
-        for arg_name, config_field in arg_mapping.items():
-            value = getattr(args, arg_name, None)
-            # Skip if None, or if it's a boolean flag that wasn't set
-            if value is not None:
-                # For boolean flags (store_true), only override if True
-                if isinstance(value, bool) and not value:
-                    continue
-                config_overrides[config_field] = value
+        # Remove Hydra-specific keys if any (handled by OmegaConf.to_container usually, but good to be safe)
+        # Note: cfg_dict will be passed as **config_overrides to load_config
+        # load_config will override the empty config_path defaults with these values.
         
         # Run benchmark
         experiment = run_benchmark(
-            config_path=args.config,
-            output_dir=args.output_dir,
-            log_dir=args.log_dir,
-            **config_overrides
+            config_path=None,  # We are providing full config via overrides
+            output_dir=output_dir,
+            log_dir=log_dir,
+            **cfg_dict
         )
         
         # Print summary
@@ -282,4 +85,4 @@ def main():
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    main()

@@ -1,0 +1,9 @@
+# @package _global_
+# Math Task Configuration
+dataset_path: data/OckBench_math.jsonl
+dataset_name: OckBench_math
+
+# Evaluation
+evaluator_type: math
+enforce_output_format: true
+custom_format_instruction: null
