@@ -2,53 +2,33 @@
 """
 OckBench - LLM Benchmarking Tool for Reasoning Tasks
 
-Main CLI entry point for running benchmarks using Hydra.
+Main CLI entry point for running benchmarks.
 """
 import sys
 import logging
-import hydra
-from omegaconf import DictConfig, OmegaConf
 
 from src.core.runner import run_benchmark
+from src.utils.parser import parse_args, build_config, get_output_dir, get_log_dir
 
 logger = logging.getLogger(__name__)
 
-@hydra.main(version_base=None, config_path="conf", config_name="config")
-def main(cfg: DictConfig) -> int:
-    """
-    Main entry point for running benchmarks.
-    
-    Args:
-        cfg: Hydra configuration object
-    """
+
+def main() -> int:
+    """Main entry point for running benchmarks."""
+    args = parse_args()
+
     try:
-        # Resolve config and convert to container
-        cfg_dict = OmegaConf.to_container(cfg, resolve=True)
-        
-        # Note: Provider and task configs are merged into the global namespace via '# @package _global_'
-        # so no manual flattening is required.
-        
-        # Resolve paths that are relative to project root
-        # Hydra changes the working directory, so we need to use absolute paths
-        if 'dataset_path' in cfg_dict and cfg_dict['dataset_path']:
-            cfg_dict['dataset_path'] = hydra.utils.to_absolute_path(cfg_dict['dataset_path'])
-        
-        # Extract special args that are passed as arguments to run_benchmark
-        output_dir = cfg_dict.pop('output_dir', 'results')
-        log_dir = cfg_dict.pop('log_dir', None)
-        
-        # Remove Hydra-specific keys if any (handled by OmegaConf.to_container usually, but good to be safe)
-        # Note: cfg_dict will be passed as **config_overrides to load_config
-        # load_config will override the empty config_path defaults with these values.
-        
+        # Build configuration from args
+        config = build_config(args)
+
         # Run benchmark
         experiment = run_benchmark(
-            config_path=None,  # We are providing full config via overrides
-            output_dir=output_dir,
-            log_dir=log_dir,
-            **cfg_dict
+            config_path=None,  # We provide full config via overrides
+            output_dir=get_output_dir(args),
+            log_dir=get_log_dir(args),
+            **config
         )
-        
+
         # Print summary
         print("\n" + "=" * 80)
         print("EXPERIMENT SUMMARY")
@@ -65,18 +45,18 @@ def main(cfg: DictConfig) -> int:
         print(f"Avg Tokens/Problem: {experiment.summary.avg_tokens_per_problem:.1f}")
         print(f"Duration: {experiment.summary.total_duration:.2f}s")
         print("=" * 80)
-        
+
         # Exit with error code if there were errors
         if experiment.summary.error_count > 0:
             print(f"\nWarning: {experiment.summary.error_count} problems had errors")
             return 1
-        
+
         return 0
-        
+
     except KeyboardInterrupt:
         print("\n\nExperiment interrupted by user")
         return 130
-    
+
     except Exception as e:
         print(f"\nError: {e}", file=sys.stderr)
         import traceback
@@ -85,4 +65,4 @@ def main(cfg: DictConfig) -> int:
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
