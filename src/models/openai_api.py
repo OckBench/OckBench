@@ -12,7 +12,6 @@ from openai import AsyncOpenAI
 
 from .base import BaseModelClient
 from ..core.schemas import ModelResponse, TokenUsage
-from ..utils.prompt_formatter import format_prompt
 
 
 logger = logging.getLogger(__name__)
@@ -48,13 +47,15 @@ class OpenAIClient(BaseModelClient):
         super().__init__(model, api_key, base_url, timeout, max_retries, **kwargs)
         
         # Initialize OpenAI client
-        client_kwargs = {
-            'api_key': api_key or 'dummy-key',  # Some local servers don't need real key
-            'timeout': timeout,
-        }
-        
+        # Let SDK read OPENAI_API_KEY from environment if not provided
+        client_kwargs = {'timeout': timeout}
+        if api_key:
+            client_kwargs['api_key'] = api_key
         if base_url:
             client_kwargs['base_url'] = base_url
+            # Local servers may not need a real key
+            if 'api_key' not in client_kwargs:
+                client_kwargs['api_key'] = 'dummy-key'
         
         self.client = AsyncOpenAI(**client_kwargs)
     
@@ -65,35 +66,9 @@ class OpenAIClient(BaseModelClient):
         max_output_tokens: int = 4096,
         **kwargs
     ) -> ModelResponse:
-        """
-        Call OpenAI API.
-        
-        Args:
-            prompt: Input prompt
-            temperature: Sampling temperature
-            max_output_tokens: Maximum output tokens
-            **kwargs: Additional parameters (top_p, reasoning_effort, enforce_format, etc.)
-        
-        Returns:
-            ModelResponse: Response with text and tokens
-        """
-        # Extract format enforcement params
-        enforce_format = kwargs.pop('enforce_output_format', False)
-        custom_instruction = kwargs.pop('custom_format_instruction', None)
-        evaluator_type = kwargs.pop('evaluator_type', 'math')
-        
-        # Format prompt with optional instruction
-        formatted_prompt = format_prompt(
-            problem=prompt,
-            enforce_format=enforce_format,
-            custom_instruction=custom_instruction,
-            evaluator_type=evaluator_type
-        )
-        
-        # Build messages
-        messages = [
-            {"role": "user", "content": formatted_prompt}
-        ]
+        """Call OpenAI API."""
+        # Build messages - prompt is already formatted by runner
+        messages = [{"role": "user", "content": prompt}]
         
         # Build request parameters
         request_params = {

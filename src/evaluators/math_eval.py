@@ -162,21 +162,12 @@ class MathEvaluator:
         except:
             return False
     
-    def evaluate(self, response: str, ground_truth: Any) -> Tuple[bool, Optional[Any], str]:
-        """
-        Evaluate model response against ground truth.
-        
-        Args:
-            response: Model response text
-            ground_truth: Ground truth answer
-        
-        Returns:
-            Tuple of (is_correct, extracted_answer, extraction_method)
-        """
+    def evaluate(self, response: str, ground_truth: Any):
+        """Evaluate model response against ground truth."""
+        from . import EvalResult
         extracted_answer, method = self.extract_answer(response)
         is_correct = self.compare_answers(extracted_answer, ground_truth)
-        
-        return is_correct, extracted_answer, method
+        return EvalResult(is_correct=is_correct, extracted_answer=extracted_answer, extraction_method=method)
 
 
 def get_evaluator(evaluator_type: str = "math", **kwargs):

@@ -4,10 +4,6 @@ google-genai>=0.1.0
 pydantic>=2.0.0
 pyyaml>=6.0
 
-# Hydra
-hydra-core>=1.3.0
-omegaconf>=2.3.0
-
 # Async and utilities
 aiohttp>=3.8.0
 tqdm>=4.65.0

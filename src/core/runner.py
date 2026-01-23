@@ -10,8 +10,8 @@ from tqdm.asyncio import tqdm as atqdm
 
 from .config import load_config
 from .schemas import (
-    BenchmarkConfig, Problem, EvaluationResult, 
-    ExperimentResult, ExperimentSummary
+    BenchmarkConfig, Problem, EvaluationResult,
+    ExperimentResult, ExperimentSummary, TokenUsage
 )
 from ..loaders.base import get_loader
 from ..models.base import BaseModelClient
@@ -124,59 +124,33 @@ class BenchmarkRunner:
         semaphore: asyncio.Semaphore,
         pbar: Optional[atqdm] = None
     ) -> EvaluationResult:
-        """
-        Process a single problem with rate limiting.
-        
-        Args:
-            problem: Problem to process
-            semaphore: Semaphore for concurrency control
-            pbar: Progress bar (optional)
-        
-        Returns:
-            EvaluationResult: Evaluation result for this problem
-        """
+        """Process a single problem with rate limiting."""
+        from ..utils.prompt_formatter import format_prompt
+
+        # Format prompt ONCE before try block (available for both success and error cases)
+        test_cases_for_prompt = None
+        if self.config.evaluator_type == "code":
+            test_cases_for_prompt = problem.metadata.get('test_list', [])
+
+        formatted_prompt = format_prompt(
+            problem=problem.problem,
+            enforce_format=self.config.enforce_output_format,
+            custom_instruction=self.config.custom_format_instruction,
+            evaluator_type=self.config.evaluator_type,
+            test_cases=test_cases_for_prompt
+        )
+
         async with semaphore:
             try:
-                # Format the prompt with format enforcement if enabled
-                # This is what will actually be sent to the model
-                from ..utils.prompt_formatter import format_prompt
-                
-                # Get test cases for code evaluation (use test_list, not test_cases which includes challenge tests)
-                test_cases_for_prompt = None
-                if self.config.evaluator_type == "code":
-                    test_cases_for_prompt = problem.metadata.get('test_list', [])
-                
-                # Build problem with test cases (no format instruction yet - model client adds that)
-                problem_with_tests = format_prompt(
-                    problem=problem.problem,
-                    enforce_format=False,  # Don't add format instruction here
-                    evaluator_type=self.config.evaluator_type,
-                    test_cases=test_cases_for_prompt
-                )
-                
-                # The full formatted prompt (for saving in results AND for token estimation)
-                formatted_prompt = format_prompt(
-                    problem=problem.problem,
-                    enforce_format=self.config.enforce_output_format,
-                    custom_instruction=self.config.custom_format_instruction,
-                    evaluator_type=self.config.evaluator_type,
-                    test_cases=test_cases_for_prompt
-                )
-                
-                # Calculate max_output_tokens using the FULL formatted prompt
-                # (this is what actually gets sent to the model)
                 max_output_tokens = self._calculate_max_output_tokens(formatted_prompt)
-                
-                # Generate response - pass problem with test cases so model knows function names
+
+                # Generate response with the formatted prompt
                 response = await self.client.generate(
-                    prompt=problem_with_tests,
+                    prompt=formatted_prompt,
                     temperature=self.config.temperature,
                     max_output_tokens=max_output_tokens,
                     reasoning_effort=self.config.reasoning_effort,
-                    top_p=self.config.top_p,
-                    enforce_output_format=self.config.enforce_output_format,
-                    custom_format_instruction=self.config.custom_format_instruction,
-                    evaluator_type=self.config.evaluator_type
+                    top_p=self.config.top_p
                 )
                 
                 # Check for API error
@@ -196,51 +170,27 @@ class BenchmarkRunner:
                         extraction_method="error"
                     )
                 else:
-                    # Evaluate response
+                    # Evaluate response using unified interface
                     if self.config.evaluator_type == "code":
-                        # Code evaluation with test cases
-                        test_cases = problem.metadata.get('test_cases', [])
-                        
-                        (is_correct, extracted_code, method, 
-                         tests_passed, tests_total, exec_error) = self.evaluator.evaluate(
-                            response.text,
-                            test_cases
-                        )
-                        
-                        result = EvaluationResult(
-                            problem_id=problem.id,
-                            question=problem.problem,  # Original problem text
-                            formatted_prompt=formatted_prompt,  # Formatted prompt with instructions
-                            ground_truth=problem.answer,
-                            model_response=response.text,
-                            extracted_answer=extracted_code,
-                            correct=is_correct,
-                            tokens=response.tokens,
-                            latency=response.latency,
-                            extraction_method=method,
-                            tests_passed=tests_passed,
-                            tests_total=tests_total,
-                            execution_error=exec_error
-                        )
+                        eval_result = self.evaluator.evaluate(response.text, problem.metadata.get('test_cases', []))
                     else:
-                        # Math evaluation
-                        is_correct, extracted_answer, method = self.evaluator.evaluate(
-                            response.text,
-                            problem.answer
-                        )
-                        
-                        result = EvaluationResult(
-                            problem_id=problem.id,
-                            question=problem.problem,  # Original problem text
-                            formatted_prompt=formatted_prompt,  # Formatted prompt with instructions
-                            ground_truth=problem.answer,
-                            model_response=response.text,
-                            extracted_answer=extracted_answer,
-                            correct=is_correct,
-                            tokens=response.tokens,
-                            latency=response.latency,
-                            extraction_method=method
-                        )
+                        eval_result = self.evaluator.evaluate(response.text, problem.answer)
+
+                    result = EvaluationResult(
+                        problem_id=problem.id,
+                        question=problem.problem,
+                        formatted_prompt=formatted_prompt,
+                        ground_truth=problem.answer,
+                        model_response=response.text,
+                        extracted_answer=eval_result.extracted_answer,
+                        correct=eval_result.is_correct,
+                        tokens=response.tokens,
+                        latency=response.latency,
+                        extraction_method=eval_result.extraction_method,
+                        tests_passed=eval_result.tests_passed,
+                        tests_total=eval_result.tests_total,
+                        execution_error=eval_result.execution_error
+                    )
                 
                 if pbar:
                     pbar.update(1)
@@ -249,47 +199,21 @@ class BenchmarkRunner:
                 
             except Exception as e:
                 logger.error(f"Exception processing problem {problem.id}: {e}")
-                
-                # Format prompt for error case too
-                from ..utils.prompt_formatter import format_prompt
-                
-                # Get test cases for code evaluation
-                test_cases_for_prompt = None
-                if self.config.evaluator_type == "code":
-                    test_cases_for_prompt = problem.metadata.get('test_list', [])
-                
-                formatted_prompt = format_prompt(
-                    problem=problem.problem,
-                    enforce_format=self.config.enforce_output_format,
-                    custom_instruction=self.config.custom_format_instruction,
-                    evaluator_type=self.config.evaluator_type,
-                    test_cases=test_cases_for_prompt
-                )
-                
-                # Return error result
-                from ..core.schemas import TokenUsage
                 result = EvaluationResult(
                     problem_id=problem.id,
-                    question=formatted_prompt,  # Save the formatted prompt
+                    question=problem.problem,
+                    formatted_prompt=formatted_prompt,
                     ground_truth=problem.answer,
                     model_response="",
                     extracted_answer=None,
                     correct=False,
-                    tokens=TokenUsage(
-                        prompt_tokens=0,
-                        answer_tokens=0,
-                        reasoning_tokens=0,
-                        output_tokens=0,
-                        total_tokens=0
-                    ),
+                    tokens=TokenUsage(prompt_tokens=0, answer_tokens=0, reasoning_tokens=0, output_tokens=0, total_tokens=0),
                     latency=0,
                     error=str(e),
                     extraction_method="exception"
                 )
-                
                 if pbar:
                     pbar.update(1)
-                
                 return result
     
     async def _run_benchmark_async(self) -> List[EvaluationResult]:
