@@ -259,46 +259,19 @@ class CodeEvaluator:
             except Exception as e:
                 logger.warning(f"Failed to delete temp file {temp_file}: {e}")
     
-    def evaluate(
-        self,
-        response: str,
-        test_cases: List[str]
-    ) -> Tuple[bool, Optional[str], str, int, int, Optional[str]]:
-        """
-        Evaluate model response against test cases.
-        
-        Args:
-            response: Model response text
-            test_cases: List of test assertions
-        
-        Returns:
-            Tuple of (is_correct, extracted_code, extraction_method,
-                     tests_passed, tests_total, execution_error)
-        """
-        # Extract code
+    def evaluate(self, response: str, test_cases: List[str]):
+        """Evaluate model response against test cases."""
+        from . import EvalResult
         extracted_code, extraction_method = self.extract_code(response)
-        
+
         if not extracted_code:
-            return (
-                False,
-                None,
-                extraction_method,
-                0,
-                len(test_cases),
-                "Failed to extract code"
+            return EvalResult(
+                is_correct=False, extracted_answer=None, extraction_method=extraction_method,
+                tests_passed=0, tests_total=len(test_cases), execution_error="Failed to extract code"
             )
-        
-        # Execute code with tests
-        all_passed, tests_passed, tests_total, error_message = self.execute_code(
-            extracted_code,
-            test_cases
-        )
-        
-        return (
-            all_passed,
-            extracted_code,
-            extraction_method,
-            tests_passed,
-            tests_total,
-            error_message
+
+        all_passed, tests_passed, tests_total, error_message = self.execute_code(extracted_code, test_cases)
+        return EvalResult(
+            is_correct=all_passed, extracted_answer=extracted_code, extraction_method=extraction_method,
+            tests_passed=tests_passed, tests_total=tests_total, execution_error=error_message
         )

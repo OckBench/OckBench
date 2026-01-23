@@ -61,33 +61,5 @@ def estimate_tokens(text: str, model: str = "gpt-4") -> int:
                 pass
 
     # Fallback: rough estimation (4 characters ≈ 1 token for English)
-    # Also apply multiplier for safety
     return int(len(text) // 4 * NON_OPENAI_TOKENIZER_MULTIPLIER)
-
-
-def check_context_limit(prompt: str, max_output: int, model: str = "gpt-4") -> bool:
-    """
-    Check if request fits within context window.
-    
-    Args:
-        prompt: Input prompt
-        max_output: Maximum output tokens
-        model: Model name
-    
-    Returns:
-        bool: True if within limits
-    """
-    context_limits = {
-        "gpt-4": 8192,
-        "gpt-4-32k": 32768,
-        "gpt-4-turbo": 128000,
-        "gpt-3.5-turbo": 16385,
-        "o1-preview": 128000,
-        "o1-mini": 128000,
-    }
-    
-    limit = context_limits.get(model, 8192)
-    prompt_tokens = estimate_tokens(prompt, model)
-    
-    return (prompt_tokens + max_output) <= limit
 

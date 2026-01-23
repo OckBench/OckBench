@@ -77,42 +77,6 @@ class JSONLDataLoader(DataLoader):
         return problems
 
 
-class HuggingFaceDataLoader(DataLoader):
-    """
-    Placeholder for future HuggingFace dataset loader.
-    
-    To implement:
-    1. Install datasets library: pip install datasets
-    2. Load dataset: dataset = load_dataset(dataset_name, split=split)
-    3. Map to Problem objects with appropriate field mapping
-    """
-    
-    def __init__(self, dataset_name: str, split: str = "test", field_mapping: dict = None):
-        """
-        Initialize HuggingFace dataset loader.
-        
-        Args:
-            dataset_name: Name of dataset on HuggingFace Hub
-            split: Dataset split to load (train/test/validation)
-            field_mapping: Mapping from HF fields to Problem fields
-        """
-        self.dataset_name = dataset_name
-        self.split = split
-        self.field_mapping = field_mapping or {
-            'problem': 'question',
-            'answer': 'answer',
-            'id': 'id'
-        }
-        raise NotImplementedError(
-            "HuggingFaceDataLoader is not yet implemented. "
-            "Use JSONLDataLoader for local files."
-        )
-    
-    def load(self) -> List[Problem]:
-        """Load from HuggingFace dataset (not implemented)."""
-        raise NotImplementedError()
-
-
 class MBPPDataLoader(DataLoader):
     """
     Loader for MBPP (Mostly Basic Python Problems) format datasets.
@@ -233,28 +197,11 @@ class MBPPDataLoader(DataLoader):
         return problems
 
 
-def get_loader(filepath: str = None, dataset_name: str = None, **kwargs) -> DataLoader:
-    """
-    Factory function to get appropriate data loader.
-    
-    Args:
-        filepath: Path to local file (for JSONL loader)
-        dataset_name: HuggingFace dataset name (for HF loader)
-        **kwargs: Additional arguments for loader
-    
-    Returns:
-        DataLoader: Appropriate data loader instance
-    """
-    if filepath:
-        filepath_obj = Path(filepath)
-        
-        # Auto-detect MBPP format
-        if 'mbpp' in filepath.lower():
-            return MBPPDataLoader(filepath)
-        else:
-            return JSONLDataLoader(filepath)
-    elif dataset_name:
-        return HuggingFaceDataLoader(dataset_name, **kwargs)
-    else:
-        raise ValueError("Must provide either filepath or dataset_name")
+def get_loader(filepath: str, **kwargs) -> DataLoader:
+    """Get appropriate data loader for filepath."""
+    if not filepath:
+        raise ValueError("filepath is required")
+    if 'mbpp' in filepath.lower():
+        return MBPPDataLoader(filepath)
+    return JSONLDataLoader(filepath)
 

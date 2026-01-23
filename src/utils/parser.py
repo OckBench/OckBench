@@ -357,13 +357,3 @@ def build_config(args: argparse.Namespace) -> Dict[str, Any]:
             config[key] = value
 
     return config
-
-
-def get_output_dir(args: argparse.Namespace) -> str:
-    """Get output directory from args."""
-    return args.output_dir
-
-
-def get_log_dir(args: argparse.Namespace) -> str:
-    """Get log directory from args."""
-    return args.log_dir

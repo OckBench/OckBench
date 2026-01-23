@@ -7,7 +7,6 @@ from google import genai
 
 from .base import BaseModelClient
 from ..core.schemas import ModelResponse, TokenUsage
-from ..utils.prompt_formatter import format_prompt
 
 
 logger = logging.getLogger(__name__)
@@ -50,106 +49,17 @@ class GeminiClient(BaseModelClient):
         max_output_tokens: int = 4096,
         **kwargs
     ) -> ModelResponse:
-        """
-        Call Gemini API (new SDK).
-        
-        Args:
-            prompt: Input prompt
-            temperature: Sampling temperature
-            max_output_tokens: Maximum output tokens
-            **kwargs: Additional parameters (top_p, enforce_format, etc.)
-        
-        Returns:
-            ModelResponse: Response with text and tokens
-        """
-        # Extract format enforcement params
-        enforce_format = kwargs.pop('enforce_output_format', False)
-        custom_instruction = kwargs.pop('custom_format_instruction', None)
-        evaluator_type = kwargs.pop('evaluator_type', 'math')
-        
-        # Format prompt with optional instruction
-        formatted_prompt = format_prompt(
-            problem=prompt,
-            enforce_format=enforce_format,
-            custom_instruction=custom_instruction,
-            evaluator_type=evaluator_type
-        )
-        
-        # Build generation config for new SDK
-        config = {
-            'temperature': temperature,
-            'max_output_tokens': max_output_tokens,
-        }
-        
-        # Add optional parameters
+        """Call Gemini API."""
+        config = {'temperature': temperature, 'max_output_tokens': max_output_tokens}
         if kwargs.get("top_p") is not None:
             config['top_p'] = kwargs["top_p"]
-        
+
         try:
-            # Make API call using new SDK (synchronous call in async context)
-            # The new SDK doesn't have native async support yet
-            response = await self._generate_content_async(formatted_prompt, config)
-            
-            # Debug: log response structure
-            if logger.isEnabledFor(logging.DEBUG):
-                logger.debug(f"Gemini response type: {type(response)}")
-                logger.debug(f"Gemini response has text attr: {hasattr(response, 'text')}")
-                logger.debug(f"Gemini response has candidates: {hasattr(response, 'candidates')}")
-            
-            # Extract response text with multiple fallback strategies
-            text = ""
-            
-            # Strategy 1: Direct text attribute
-            if hasattr(response, 'text') and response.text:
-                text = response.text
-            
-            # Strategy 2: Extract from candidates structure
-            elif hasattr(response, 'candidates') and response.candidates:
-                if len(response.candidates) > 0:
-                    candidate = response.candidates[0]
-                    
-                    # Try candidate.content.parts
-                    if hasattr(candidate, 'content') and candidate.content:
-                        content = candidate.content
-                        if hasattr(content, 'parts') and content.parts:
-                            try:
-                                parts_texts = []
-                                for part in content.parts:
-                                    if hasattr(part, 'text') and part.text:
-                                        parts_texts.append(part.text)
-                                if parts_texts:
-                                    text = ' '.join(parts_texts)
-                            except (TypeError, AttributeError) as e:
-                                logger.warning(f"Failed to extract from parts: {e}")
-                    
-                    # Try direct candidate.text
-                    if not text and hasattr(candidate, 'text') and candidate.text:
-                        text = candidate.text
-            
-            # Log warning if no text extracted
-            if not text:
-                # Check if model did thinking but produced no output
-                tokens_temp = self._extract_tokens(response)
-                if tokens_temp.reasoning_tokens > 0:
-                    logger.warning(
-                        f"No text content found in Gemini response, "
-                        f"but model used {tokens_temp.reasoning_tokens} thinking tokens. "
-                        f"Model may have decided not to answer after internal reasoning or the reasoning exceeded the max output tokens."
-                    )
-                else:
-                    logger.warning("No text content found in Gemini response")
-            
-            # Extract token usage
+            response = await self._generate_content_async(prompt, config)
+            text = self._extract_text(response)
             tokens = self._extract_tokens(response)
-            
-            # Get finish reason if available
-            finish_reason = None
-            if hasattr(response, 'candidates') and response.candidates:
-                if len(response.candidates) > 0:
-                    candidate = response.candidates[0]
-                    if hasattr(candidate, 'finish_reason'):
-                        finish_reason = str(candidate.finish_reason)
-            
+            finish_reason = self._get_finish_reason(response)
+
             return ModelResponse(
                 text=text,
                 tokens=tokens,
@@ -186,7 +96,45 @@ class GeminiClient(BaseModelClient):
             )
         )
         return response
-    
+
+    def _extract_text(self, response) -> str:
+        """Extract text from Gemini response with multiple fallback strategies."""
+        # Strategy 1: Direct text attribute
+        if hasattr(response, 'text') and response.text:
+            return response.text
+
+        # Strategy 2: Extract from candidates structure
+        if hasattr(response, 'candidates') and response.candidates:
+            candidate = response.candidates[0]
+
+            # Try candidate.content.parts
+            if hasattr(candidate, 'content') and candidate.content:
+                parts = getattr(candidate.content, 'parts', None)
+                if parts:
+                    texts = [p.text for p in parts if hasattr(p, 'text') and p.text]
+                    if texts:
+                        return ' '.join(texts)
+
+            # Try direct candidate.text
+            if hasattr(candidate, 'text') and candidate.text:
+                return candidate.text
+
+        # Log warning if no text extracted
+        tokens = self._extract_tokens(response)
+        if tokens.reasoning_tokens > 0:
+            logger.warning(f"No text in response, but {tokens.reasoning_tokens} thinking tokens used")
+        else:
+            logger.warning("No text content found in Gemini response")
+        return ""
+
+    def _get_finish_reason(self, response) -> Optional[str]:
+        """Extract finish reason from Gemini response."""
+        if hasattr(response, 'candidates') and response.candidates:
+            candidate = response.candidates[0]
+            if hasattr(candidate, 'finish_reason'):
+                return str(candidate.finish_reason)
+        return None
+
     def _extract_tokens(self, response) -> TokenUsage:
         """
         Extract token usage from Gemini response.

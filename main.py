@@ -8,7 +8,7 @@ import sys
 import logging
 
 from src.core.runner import run_benchmark
-from src.utils.parser import parse_args, build_config, get_output_dir, get_log_dir
+from src.utils.parser import parse_args, build_config
 
 logger = logging.getLogger(__name__)
 
@@ -18,14 +18,11 @@ def main() -> int:
     args = parse_args()
 
     try:
-        # Build configuration from args
         config = build_config(args)
-
-        # Run benchmark
         experiment = run_benchmark(
-            config_path=None,  # We provide full config via overrides
-            output_dir=get_output_dir(args),
-            log_dir=get_log_dir(args),
+            config_path=None,
+            output_dir=args.output_dir,
+            log_dir=args.log_dir,
             **config
         )
 
