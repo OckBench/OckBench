@@ -98,7 +98,7 @@ class OpenAIClient(BaseModelClient):
         else:
             # Standard models use max_tokens
             request_params["max_tokens"] = max_output_tokens
-            
+
             # Add optional parameters for standard models
             if kwargs.get("top_p") is not None:
                 request_params["top_p"] = kwargs["top_p"]
@@ -108,7 +108,13 @@ class OpenAIClient(BaseModelClient):
                 request_params["frequency_penalty"] = kwargs["frequency_penalty"]
             if kwargs.get("presence_penalty") is not None:
                 request_params["presence_penalty"] = kwargs["presence_penalty"]
-        
+
+        # Handle enable_thinking for Qwen3 models (via extra_body)
+        if kwargs.get("enable_thinking") is not None:
+            request_params["extra_body"] = {
+                "chat_template_kwargs": {"enable_thinking": kwargs["enable_thinking"]}
+            }
+
         # Make API call
         try:
             response = await self.client.chat.completions.create(**request_params)

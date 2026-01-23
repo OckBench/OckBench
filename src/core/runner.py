@@ -150,7 +150,8 @@ class BenchmarkRunner:
                     temperature=self.config.temperature,
                     max_output_tokens=max_output_tokens,
                     reasoning_effort=self.config.reasoning_effort,
-                    top_p=self.config.top_p
+                    top_p=self.config.top_p,
+                    enable_thinking=self.config.enable_thinking
                 )
                 
                 # Check for API error

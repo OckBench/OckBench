@@ -170,6 +170,13 @@ Examples:
         default=None,
         help="Nucleus sampling parameter",
     )
+    parser.add_argument(
+        "--enable-thinking",
+        type=lambda x: x.lower() in ('true', '1', 'yes'),
+        default=None,
+        metavar="true|false",
+        help="Enable/disable thinking mode for Qwen3 models",
+    )
 
     # Runtime configuration
     parser.add_argument(
@@ -330,6 +337,7 @@ def build_config(args: argparse.Namespace) -> Dict[str, Any]:
         "max_context_window": args.max_context_window,
         "reasoning_effort": args.reasoning_effort,
         "top_p": args.top_p,
+        "enable_thinking": args.enable_thinking,
         "concurrency": args.concurrency,
         "timeout": args.timeout,
         "max_retries": args.max_retries,
