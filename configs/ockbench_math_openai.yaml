@@ -12,9 +12,10 @@ model: gpt-5  # Or use gpt-4, gpt-4-turbo, o1-preview, o3, etc.
 
 # Generation parameters
 temperature: 0.0
+# Note: max_output_tokens and max_context_window are mutually exclusive - set only one
 max_output_tokens: 4096
-# Alternative: use max_context_window for dynamic calculation
-# max_context_window: 128000  # Automatically calculates max_output_tokens per problem
+# Or use max_context_window for dynamic calculation (comment out max_output_tokens above):
+# max_context_window: 128000
 
 # Runtime configuration
 concurrency: 10

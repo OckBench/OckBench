@@ -13,8 +13,10 @@ api_key: dummy  # Many local servers don't need a real key
 
 # Generation parameters
 temperature: 0.0
+# Note: max_output_tokens and max_context_window are mutually exclusive - set only one
 max_context_window: 40960  # Match your model's context window
-# max_output_tokens: null  # Will be calculated from max_context_window
+# Or use max_output_tokens for fixed output limit (comment out max_context_window above):
+# max_output_tokens: 4096
 
 # Runtime configuration
 concurrency: 200  # Can be much higher for local serving

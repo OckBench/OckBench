@@ -8,6 +8,7 @@ from typing import Dict, Any
 
 
 # Provider presets with default values
+# Note: max_output_tokens and max_context_window are mutually exclusive
 PROVIDER_PRESETS = {
     "openai": {
         "provider": "openai",
@@ -31,7 +32,6 @@ PROVIDER_PRESETS = {
         "timeout": 600,
         "max_retries": 3,
         "temperature": 0.0,
-        "max_output_tokens": 4096,
         "max_context_window": 40960,
     },
 }
@@ -150,13 +150,13 @@ Examples:
         "--max-output-tokens",
         type=int,
         default=None,
-        help="Maximum output tokens",
+        help="Maximum output tokens (mutually exclusive with --max-context-window)",
     )
     parser.add_argument(
         "--max-context-window",
         type=int,
         default=None,
-        help="Maximum context window (input + output). If set, max_output_tokens calculated dynamically",
+        help="Maximum context window (input + output), dynamically calculates output tokens (mutually exclusive with --max-output-tokens)",
     )
     parser.add_argument(
         "--reasoning-effort",
@@ -363,5 +363,12 @@ def build_config(args: argparse.Namespace) -> Dict[str, Any]:
     for key, value in cli_overrides.items():
         if value is not None:
             config[key] = value
+
+    # Handle mutual exclusivity of max_output_tokens and max_context_window
+    # If user explicitly sets one via CLI, remove the other from config
+    if args.max_output_tokens is not None:
+        config.pop("max_context_window", None)
+    elif args.max_context_window is not None:
+        config.pop("max_output_tokens", None)
 
     return config

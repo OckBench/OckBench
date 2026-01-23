@@ -11,7 +11,10 @@ model: gemini-2.5-flash-lite
 
 # Generation parameters
 temperature: 0.0
+# Note: max_output_tokens and max_context_window are mutually exclusive - set only one
 max_output_tokens: 65536  # Increased for code generation
+# Or use max_context_window for dynamic calculation (comment out max_output_tokens above):
+# max_context_window: 1000000
 
 # Runtime configuration
 concurrency: 100

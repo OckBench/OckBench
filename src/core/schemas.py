@@ -2,7 +2,7 @@
 Pydantic schemas for OckBench benchmarking tool.
 """
 from typing import Optional, Dict, Any, List, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from datetime import datetime
 
 
@@ -21,8 +21,8 @@ class BenchmarkConfig(BaseModel):
     
     # Generation parameters
     temperature: float = Field(0.0, ge=0.0, le=2.0, description="Sampling temperature")
-    max_output_tokens: Optional[int] = Field(4096, gt=0, description="Maximum output tokens (can be omitted if max_context_window is set)")
-    max_context_window: Optional[int] = Field(None, gt=0, description="Maximum context window (input + output). If set, max_output_tokens will be calculated dynamically")
+    max_output_tokens: Optional[int] = Field(None, gt=0, description="Maximum output tokens (mutually exclusive with max_context_window)")
+    max_context_window: Optional[int] = Field(None, gt=0, description="Maximum context window (input + output), dynamically calculates output tokens (mutually exclusive with max_output_tokens)")
     reasoning_effort: Optional[str] = Field(None, description="Reasoning effort level (for o1/o3 models)")
     top_p: Optional[float] = Field(None, ge=0.0, le=1.0, description="Nucleus sampling parameter")
     enable_thinking: Optional[bool] = Field(None, description="Enable/disable thinking mode for Qwen3 models (None=use model default)")
@@ -44,6 +44,23 @@ class BenchmarkConfig(BaseModel):
     # Optional metadata
     experiment_name: Optional[str] = Field(None, description="Custom experiment name")
     notes: Optional[str] = Field(None, description="Additional notes about the experiment")
+
+    @model_validator(mode='after')
+    def validate_token_config(self) -> 'BenchmarkConfig':
+        """Validate that exactly one of max_output_tokens or max_context_window is set."""
+        has_max_output = self.max_output_tokens is not None
+        has_max_context = self.max_context_window is not None
+
+        if has_max_output and has_max_context:
+            raise ValueError(
+                "max_output_tokens and max_context_window are mutually exclusive. "
+                "Please set only one of them."
+            )
+        if not has_max_output and not has_max_context:
+            raise ValueError(
+                "Either max_output_tokens or max_context_window must be set."
+            )
+        return self
 
 
 class Problem(BaseModel):
