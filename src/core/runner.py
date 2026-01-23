@@ -78,45 +78,46 @@ class BenchmarkRunner:
     def _calculate_max_output_tokens(self, prompt: str) -> int:
         """
         Calculate max_output_tokens based on config and prompt length.
-        
+
+        Either max_context_window or max_output_tokens is set (mutually exclusive).
         If max_context_window is set, calculates dynamically.
         Otherwise, uses the configured max_output_tokens.
-        
+
         Args:
             prompt: Input prompt text
-        
+
         Returns:
             int: Maximum output tokens for this request
         """
         if self.config.max_context_window is not None:
-            # Estimate input tokens
+            # Dynamic calculation based on context window
             from ..utils.token_counter import estimate_tokens
-            
+
             try:
                 input_tokens = estimate_tokens(prompt, self.config.model)
             except Exception as e:
                 logger.warning(f"Failed to estimate tokens, using rough estimate: {e}")
                 # Rough estimate: ~4 chars per token
                 input_tokens = len(prompt) // 4
-            
+
             # Calculate available output tokens with safety buffer
             # Buffer accounts for: chat template tokens, tokenizer differences, etc.
             safety_buffer = 256
             max_output = self.config.max_context_window - input_tokens - safety_buffer
-            
+
             # Ensure we have at least some minimum output space
             min_output = 100
             max_output = max(max_output, min_output)
-            
+
             logger.debug(
                 f"Dynamic max_output_tokens: {max_output} "
                 f"(context: {self.config.max_context_window}, input: {input_tokens})"
             )
-            
+
             return max_output
         else:
-            # Use configured value
-            return self.config.max_output_tokens or 4096
+            # Use configured max_output_tokens (guaranteed to be set by schema validation)
+            return self.config.max_output_tokens
     
     async def _process_single_problem(
         self,
