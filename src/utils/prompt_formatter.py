@@ -11,6 +11,8 @@ DEFAULT_FORMAT_INSTRUCTION = """After solving the problem, clearly state your fi
 
 DEFAULT_CODE_FORMAT_INSTRUCTION = """Please solve the following problem. You may explain your reasoning first. However, after solving the problem, you MUST enclose the final executable Python code within <solution> and </solution> tags. Do not put markdown backticks inside the tags, just raw Python code."""
 
+DEFAULT_SCIENCE_FORMAT_INSTRUCTION = """After analyzing the question, clearly state your final answer as a single letter (A, B, C, or D) in the format: "The answer is [LETTER]." """
+
 
 def format_prompt(
     problem: str,
@@ -53,6 +55,8 @@ def format_prompt(
         # Select default instruction based on evaluator type
         if evaluator_type == "code":
             instruction = DEFAULT_CODE_FORMAT_INSTRUCTION
+        elif evaluator_type == "science":
+            instruction = DEFAULT_SCIENCE_FORMAT_INSTRUCTION
         else:
             instruction = DEFAULT_FORMAT_INSTRUCTION
     

@@ -19,8 +19,8 @@ PROVIDER_PRESETS = {
     },
     "gemini": {
         "provider": "gemini",
-        "concurrency": 5,
-        "timeout": 120,
+        "concurrency": 20,
+        "timeout": 300,
         "max_retries": 3,
         "temperature": 0.0,
         "max_output_tokens": 8192,
@@ -28,8 +28,8 @@ PROVIDER_PRESETS = {
     "generic": {
         "provider": "generic",
         "base_url": "http://localhost:8000/v1",
-        "concurrency": 20,
-        "timeout": 600,
+        "concurrency": 200,
+        "timeout": 3600,  # 60 minutes
         "max_retries": 3,
         "temperature": 0.0,
         "max_context_window": 40960,
@@ -51,6 +51,12 @@ TASK_PRESETS = {
         "enforce_output_format": True,
         "execution_timeout": 10,
         "include_challenge_tests": True,
+    },
+    "science": {
+        "dataset_path": "data/GPQA_Diamond.jsonl",
+        "dataset_name": "GPQA_Diamond",
+        "evaluator_type": "science",
+        "enforce_output_format": True,
     },
 }
 
@@ -92,7 +98,7 @@ Examples:
     parser.add_argument(
         "--task",
         type=str,
-        choices=["math", "coding"],
+        choices=["math", "coding", "science"],
         default="math",
         help="Task type preset (default: math)",
     )
@@ -202,7 +208,7 @@ Examples:
     parser.add_argument(
         "--evaluator-type",
         type=str,
-        choices=["math", "code"],
+        choices=["math", "code", "science"],
         default=None,
         help="Type of evaluator to use",
     )
