@@ -173,11 +173,11 @@ class MathEvaluator:
 def get_evaluator(evaluator_type: str = "math", **kwargs):
     """
     Factory function to get appropriate evaluator.
-    
+
     Args:
-        evaluator_type: Type of evaluator ('math', 'code', etc.)
+        evaluator_type: Type of evaluator ('math', 'code', 'science', etc.)
         **kwargs: Additional arguments for evaluator (e.g., timeout for code)
-    
+
     Returns:
         Evaluator instance
     """
@@ -187,6 +187,9 @@ def get_evaluator(evaluator_type: str = "math", **kwargs):
         from .code_eval import CodeEvaluator
         timeout = kwargs.get('timeout', 5)
         return CodeEvaluator(timeout=timeout)
+    elif evaluator_type == "science":
+        from .science_eval import ScienceEvaluator
+        return ScienceEvaluator()
     else:
         raise NotImplementedError(f"Evaluator type '{evaluator_type}' not implemented")
 

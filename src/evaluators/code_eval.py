@@ -47,31 +47,69 @@ class CodeEvaluator:
             (r'(class\s+\w+.*?:\s*\n(?:(?:    |\t).*\n)*)', 'class_def', re.MULTILINE),
         ]
     
+    def _clean_code(self, code: str) -> str:
+        """
+        Clean extracted code by removing prose text and invalid lines.
+
+        Args:
+            code: Raw extracted code
+
+        Returns:
+            Cleaned code string
+        """
+        lines = code.split('\n')
+        cleaned_lines = []
+        in_code = False
+
+        for line in lines:
+            stripped = line.strip()
+
+            # Skip empty lines at the beginning
+            if not in_code and not stripped:
+                continue
+
+            # Detect start of actual code
+            if not in_code:
+                # Code typically starts with class, def, import, from, or variable assignment
+                if re.match(r'^(class |def |import |from |@|\w+\s*=)', stripped):
+                    in_code = True
+                    cleaned_lines.append(line)
+                # Skip prose lines before code starts
+                continue
+
+            # Once in code, include everything
+            cleaned_lines.append(line)
+
+        return '\n'.join(cleaned_lines).strip()
+
     def extract_code(self, response: str) -> Tuple[Optional[str], str]:
         """
         Extract Python code from model response using multiple patterns.
-        
+
         Args:
             response: Model response text
-        
+
         Returns:
             Tuple of (extracted_code, extraction_method)
         """
         if not response or not response.strip():
             return None, 'empty_response'
-        
+
         # Try each pattern in order of specificity
         for pattern, method_name, flags in self.extraction_patterns:
             matches = re.findall(pattern, response, flags)
-            
+
             if matches:
                 # Take the last match (usually the final/complete version)
                 code = matches[-1] if isinstance(matches[-1], str) else matches[-1][0]
                 code = code.strip()
-                
+
                 if code:
-                    logger.debug(f"Extracted code using method '{method_name}'")
-                    return code, method_name
+                    # Clean the code to remove any prose text
+                    code = self._clean_code(code)
+                    if code:
+                        logger.debug(f"Extracted code using method '{method_name}'")
+                        return code, method_name
         
         # Fallback: Try to extract any Python-like code
         # Look for function definitions anywhere in the response
@@ -104,15 +142,30 @@ class CodeEvaluator:
     def _create_test_script(self, code: str, test_cases: List[str]) -> str:
         """
         Create a complete Python script with code and test cases.
-        
+
         Args:
             code: Extracted code to test
             test_cases: List of test assertions
-        
+
         Returns:
             str: Complete Python script
         """
+        # Common imports needed for LeetCode-style problems
+        common_imports = [
+            "from typing import List, Dict, Optional, Any, Tuple, Set",
+            "from collections import defaultdict, Counter, deque",
+            "from functools import lru_cache, reduce",
+            "from itertools import permutations, combinations, product",
+            "from heapq import heappush, heappop, heapify",
+            "from bisect import bisect_left, bisect_right",
+            "import math",
+            "import sys",
+            "",
+        ]
+
         script_parts = [
+            "# Common imports",
+            *common_imports,
             "# Extracted code",
             code,
             "",
