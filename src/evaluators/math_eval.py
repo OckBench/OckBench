@@ -131,20 +131,28 @@ class MathEvaluator:
     def compare_answers(self, predicted: Any, ground_truth: Any) -> bool:
         """
         Compare predicted answer with ground truth.
-        
+
         Args:
             predicted: Predicted answer (can be None)
             ground_truth: Ground truth answer
-        
+
         Returns:
             bool: True if answers match
         """
         if predicted is None:
             return False
-        
-        # Normalize ground truth as well
+
+        # Extract and normalize ground truth
         if isinstance(ground_truth, str):
-            ground_truth = self._normalize_answer(ground_truth)
+            # First check if ground_truth contains \boxed{} and extract from it
+            if r'\boxed{' in ground_truth or '\\boxed{' in ground_truth:
+                extracted_gt, _ = self.extract_answer(ground_truth)
+                if extracted_gt is not None:
+                    ground_truth = extracted_gt
+                else:
+                    ground_truth = self._normalize_answer(ground_truth)
+            else:
+                ground_truth = self._normalize_answer(ground_truth)
         
         # Type conversions for comparison
         # If one is int and other is float, compare as floats
