@@ -109,10 +109,15 @@ class OpenAIClient(BaseModelClient):
             if kwargs.get("presence_penalty") is not None:
                 request_params["presence_penalty"] = kwargs["presence_penalty"]
 
-        # Handle enable_thinking for Qwen3 models (via extra_body)
+        # Handle enable_thinking for models that support thinking mode (via extra_body)
+        # Qwen3 uses {"enable_thinking": bool}, DeepSeek uses {"thinking": bool}
         if kwargs.get("enable_thinking") is not None:
+            if "deepseek" in self.model.lower():
+                thinking_key = "thinking"
+            else:
+                thinking_key = "enable_thinking"
             request_params["extra_body"] = {
-                "chat_template_kwargs": {"enable_thinking": kwargs["enable_thinking"]}
+                "chat_template_kwargs": {thinking_key: kwargs["enable_thinking"]}
             }
 
         # Make API call
@@ -186,5 +191,5 @@ class OpenAIClient(BaseModelClient):
             bool: True if reasoning model
         """
         model_lower = self.model.lower()
-        return any(prefix in model_lower for prefix in ['o1', 'o3', 'gpt-5'])
+        return any(prefix in model_lower for prefix in ['o1', 'o3', 'o4', 'gpt-5'])
 

@@ -22,15 +22,16 @@ vllm serve <model_name> --port 8000 --tensor-parallel-size <N>
 
 Selected by me, feel free to change in the script:
 
-| Model | Max Tokens |
-|-------|------------|
-| zai-org/GLM-4.7 | 202752 |
-| zai-org/GLM-4.7-Flash | 202752 |
-| deepseek-ai/DeepSeek-V3.2 | 163840 |
-| moonshotai/Kimi-K2-Instruct | 262144 |
-| moonshotai/Kimi-K2-Thinking | 262144 |
-| Qwen/Qwen3-235B-A22B-Instruct-2507 | 262144 |
-| Qwen/Qwen3-235B-A22B-Thinking-2507 | 262144 |
+| Model | Max Tokens | Notes |
+|-------|------------|-------|
+| zai-org/GLM-4.7 | 202752 | |
+| zai-org/GLM-4.7-Flash | 202752 | |
+| deepseek-ai/DeepSeek-V3.2 | 163840 | thinking=true |
+| deepseek-ai/DeepSeek-V3.2 | 163840 | thinking=false |
+| moonshotai/Kimi-K2-Instruct | 262144 | |
+| moonshotai/Kimi-K2-Thinking | 262144 | |
+| Qwen/Qwen3-235B-A22B-Instruct-2507 | 262144 | |
+| Qwen/Qwen3-235B-A22B-Thinking-2507 | 262144 | |
 
 ## Output
 
