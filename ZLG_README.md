@@ -24,8 +24,10 @@ Selected by me, feel free to change in the script:
 
 | Model | Max Tokens | Notes |
 |-------|------------|-------|
-| zai-org/GLM-4.7 | 202752 | |
-| zai-org/GLM-4.7-Flash | 202752 | |
+| zai-org/GLM-4.7 | 202752 | thinking=true |
+| zai-org/GLM-4.7 | 202752 | thinking=false |
+| zai-org/GLM-4.7-Flash | 202752 | thinking=true |
+| zai-org/GLM-4.7-Flash | 202752 | thinking=false |
 | deepseek-ai/DeepSeek-V3.2 | 163840 | thinking=true |
 | deepseek-ai/DeepSeek-V3.2 | 163840 | thinking=false |
 | moonshotai/Kimi-K2-Instruct | 262144 | |

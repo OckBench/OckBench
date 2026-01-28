@@ -76,9 +76,11 @@ run() {
 # MODEL CONFIGURATIONS
 # =============================================================================
 
-# GLM-4.7 series (max context: 202752)
-run "zai-org/GLM-4.7" 202752
-run "zai-org/GLM-4.7-Flash" 202752
+# GLM-4.7 series (max context: 202752) — run with thinking on and off
+run "zai-org/GLM-4.7" 202752 true
+run "zai-org/GLM-4.7" 202752 false
+run "zai-org/GLM-4.7-Flash" 202752 true
+run "zai-org/GLM-4.7-Flash" 202752 false
 
 # DeepSeek-V3.2 (max context: 163840) — run with thinking on and off
 run "deepseek-ai/DeepSeek-V3.2" 163840 true
