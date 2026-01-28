@@ -181,7 +181,7 @@ Examples:
         type=lambda x: x.lower() in ('true', '1', 'yes'),
         default=None,
         metavar="true|false",
-        help="Enable/disable thinking mode for Qwen3 models",
+        help="Enable/disable thinking mode for supported models (Qwen3, DeepSeek)",
     )
 
     # Runtime configuration

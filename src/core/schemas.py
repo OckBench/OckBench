@@ -25,7 +25,7 @@ class BenchmarkConfig(BaseModel):
     max_context_window: Optional[int] = Field(None, gt=0, description="Maximum context window (input + output), dynamically calculates output tokens (mutually exclusive with max_output_tokens)")
     reasoning_effort: Optional[str] = Field(None, description="Reasoning effort level (for o1/o3 models)")
     top_p: Optional[float] = Field(None, ge=0.0, le=1.0, description="Nucleus sampling parameter")
-    enable_thinking: Optional[bool] = Field(None, description="Enable/disable thinking mode for Qwen3 models (None=use model default)")
+    enable_thinking: Optional[bool] = Field(None, description="Enable/disable thinking mode for supported models like Qwen3 and DeepSeek (None=use model default)")
     
     # Runtime config
     concurrency: int = Field(5, gt=0, description="Number of concurrent API requests")
