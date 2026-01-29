@@ -13,6 +13,13 @@ uv pip install -r requirements.txt
 ```bash
 # Start model server (I used vLLM, modify as needed)
 vllm serve <model_name> --port 8000 --tensor-parallel-size <N>
+python3 -m sglang.launch_server --model-path <model_name> --trust-remote-code --port 8000 --tp <N>
+
+python3 -m sglang.launch_server --model-path Qwen/Qwen3-8B --trust-remote-code --port 8000 --tp 4
+./scripts/run_mathbench_local_models.sh Qwen/Qwen3-8B 
+
+python3 -m sglang.launch_server --model-path Qwen/Qwen3-235B-A22B-Thinking-2507 --trust-remote-code --port 8000 --tp 8 --ep 8
+./scripts/run_mathbench_local_models.sh Qwen/Qwen3-235B-A22B-Thinking-2507 262144
 
 # Edit BASE_URL in script if needed, then run
 ./scripts/run_mathbench_local_models.sh
