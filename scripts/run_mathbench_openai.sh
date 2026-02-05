@@ -57,7 +57,7 @@ run() {
         --evaluator-type $EVALUATOR \
         --max-output-tokens $max_tokens \
         --concurrency $CONCURRENCY \
-        --timeout 600"
+        --timeout 1200"
 
     [[ -n "$effort" ]] && cmd="$cmd --reasoning-effort $effort"
 

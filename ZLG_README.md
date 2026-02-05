@@ -18,8 +18,8 @@ python3 -m sglang.launch_server --model-path <model_name> --trust-remote-code --
 python3 -m sglang.launch_server --model-path Qwen/Qwen3-8B --trust-remote-code --port 8000 --tp 4
 ./scripts/run_mathbench_local_models.sh Qwen/Qwen3-8B 
 
-python3 -m sglang.launch_server --model-path Qwen/Qwen3-235B-A22B-Thinking-2507 --trust-remote-code --port 8000 --tp 8 --ep 8
-./scripts/run_mathbench_local_models.sh Qwen/Qwen3-235B-A22B-Thinking-2507 262144
+python3 -m sglang.launch_server --model-path Qwen/Qwen3-235B-A22B-Thinking-2507 --trust-remote-code --port 8000 --tp 8 --ep 8 --mem-fraction-static 0.7
+s./scripts/run_mathbench_local_models.sh Qwen/Qwen3-235B-A22B-Thinking-2507 204800
 
 # Edit BASE_URL in script if needed, then run
 ./scripts/run_mathbench_local_models.sh
@@ -29,15 +29,18 @@ python3 -m sglang.launch_server --model-path Qwen/Qwen3-235B-A22B-Thinking-2507 
 
 Selected by me, feel free to change in the script:
 
-| Model | Max Tokens |
-|-------|------------|
-| zai-org/GLM-4.7 | 202752 |
-| zai-org/GLM-4.7-Flash | 202752 |
-| deepseek-ai/DeepSeek-V3.2 | 163840 |
-| moonshotai/Kimi-K2-Instruct | 262144 |
-| moonshotai/Kimi-K2-Thinking | 262144 |
-| Qwen/Qwen3-235B-A22B-Instruct-2507 | 262144 |
-| Qwen/Qwen3-235B-A22B-Thinking-2507 | 262144 |
+| Model | Max Tokens | Notes |
+|-------|------------|-------|
+| zai-org/GLM-4.7 | 202752 | thinking=true |
+| zai-org/GLM-4.7 | 202752 | thinking=false |
+| zai-org/GLM-4.7-Flash | 202752 | thinking=true |
+| zai-org/GLM-4.7-Flash | 202752 | thinking=false |
+| deepseek-ai/DeepSeek-V3.2 | 163840 | thinking=true |
+| deepseek-ai/DeepSeek-V3.2 | 163840 | thinking=false |
+| moonshotai/Kimi-K2-Instruct | 262144 | |
+| moonshotai/Kimi-K2-Thinking | 262144 | |
+| Qwen/Qwen3-235B-A22B-Instruct-2507 | 262144 | |
+| Qwen/Qwen3-235B-A22B-Thinking-2507 | 262144 | |
 
 ## Output
 
