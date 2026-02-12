@@ -19,10 +19,12 @@ def main() -> int:
 
     try:
         config = build_config(args)
+        cache = config.pop('cache', None)
         experiment = run_benchmark(
             config_path=None,
             output_dir=args.output_dir,
             log_dir=args.log_dir,
+            cache=cache,
             **config
         )
 

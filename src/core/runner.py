@@ -2,10 +2,11 @@
 Main benchmark runner with concurrent API calls and result aggregation.
 """
 import asyncio
+import json
 import logging
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Set
 from tqdm.asyncio import tqdm as atqdm
 
 from .config import load_config
@@ -36,18 +37,63 @@ class BenchmarkRunner:
     - Aggregating and saving results
     """
     
-    def __init__(self, config: BenchmarkConfig):
+    def __init__(self, config: BenchmarkConfig, cache_path: Optional[str] = None):
         """
         Initialize benchmark runner.
-        
+
         Args:
             config: Benchmark configuration
+            cache_path: Path to JSONL cache file for incremental saving and resume
         """
         self.config = config
+        self.cache_path = cache_path
         self.client: Optional[BaseModelClient] = None
         self.evaluator = None
         self.problems: List[Problem] = []
+        self._cached_results: List[EvaluationResult] = []
     
+    def _load_cache(self) -> Set:
+        """Load completed problem IDs from cache file.
+
+        Returns:
+            Set of problem IDs that completed successfully (no error).
+        """
+        cache_file = Path(self.cache_path)
+        if not cache_file.exists():
+            return set()
+
+        completed_ids = set()
+        self._cached_results = []
+        line_num = 0
+        for line in cache_file.read_text(encoding='utf-8').strip().split('\n'):
+            line_num += 1
+            if not line.strip():
+                continue
+            try:
+                data = json.loads(line)
+                result = EvaluationResult(**data)
+                # Only skip problems that completed without error
+                if not result.error:
+                    completed_ids.add(result.problem_id)
+                    self._cached_results.append(result)
+                else:
+                    logger.debug(f"Cache line {line_num}: problem {result.problem_id} had error, will retry")
+            except Exception as e:
+                logger.warning(f"Cache line {line_num}: failed to parse, skipping: {e}")
+
+        logger.info(f"Loaded {len(completed_ids)} completed results from cache")
+        return completed_ids
+
+    def _append_to_cache(self, result: EvaluationResult):
+        """Append a single result to the cache file."""
+        if not self.cache_path:
+            return
+        cache_file = Path(self.cache_path)
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(cache_file, 'a', encoding='utf-8') as f:
+            f.write(result.model_dump_json() + '\n')
+            f.flush()
+
     def _create_client(self) -> BaseModelClient:
         """
         Create appropriate API client based on provider.
@@ -194,11 +240,12 @@ class BenchmarkRunner:
                         execution_error=eval_result.execution_error
                     )
                 
+                self._append_to_cache(result)
                 if pbar:
                     pbar.update(1)
-                
+
                 return result
-                
+
             except Exception as e:
                 logger.error(f"Exception processing problem {problem.id}: {e}")
                 result = EvaluationResult(
@@ -214,6 +261,7 @@ class BenchmarkRunner:
                     error=str(e),
                     extraction_method="exception"
                 )
+                self._append_to_cache(result)
                 if pbar:
                     pbar.update(1)
                 return result
@@ -316,22 +364,37 @@ class BenchmarkRunner:
         logger.info("Loading dataset...")
         loader = get_loader(filepath=self.config.dataset_path)
         self.problems = loader.load()
-        logger.info(f"Loaded {len(self.problems)} problems")
-        
+        total_problems = len(self.problems)
+        logger.info(f"Loaded {total_problems} problems")
+
+        # Resume from cache if available
+        if self.cache_path:
+            completed_ids = self._load_cache()
+            if completed_ids:
+                self.problems = [p for p in self.problems if p.id not in completed_ids]
+                logger.info(f"Resuming: {len(completed_ids)} cached, {len(self.problems)} remaining")
+
         # Create client
         logger.info("Initializing API client...")
         self.client = self._create_client()
-        
+
         # Create evaluator
         logger.info("Initializing evaluator...")
         evaluator_kwargs = {}
         if self.config.evaluator_type == "code":
             evaluator_kwargs['timeout'] = self.config.execution_timeout
         self.evaluator = get_evaluator(self.config.evaluator_type, **evaluator_kwargs)
-        
-        # Run benchmark
-        logger.info("Running benchmark...")
-        results = asyncio.run(self._run_benchmark_async())
+
+        # Run benchmark on remaining problems
+        if self.problems:
+            logger.info("Running benchmark...")
+            new_results = asyncio.run(self._run_benchmark_async())
+        else:
+            logger.info("All problems already cached, no work to do")
+            new_results = []
+
+        # Combine cached + new results
+        results = self._cached_results + list(new_results)
         
         # Compute summary
         duration = time.time() - start_time
@@ -372,6 +435,7 @@ def run_benchmark(
     config_path: Optional[str] = None,
     output_dir: str = "results",
     log_dir: Optional[str] = None,
+    cache: Optional[str] = None,
     **config_overrides
 ) -> ExperimentResult:
     """
@@ -386,6 +450,9 @@ def run_benchmark(
     Returns:
         ExperimentResult: Complete experiment results
     """
+    # Pop cache from overrides if passed through config dict (not a BenchmarkConfig field)
+    config_overrides.pop('cache', None)
+
     # Load config
     config = load_config(config_path, **config_overrides)
     
@@ -401,7 +468,7 @@ def run_benchmark(
     setup_logger(log_file=str(log_file) if log_file else None)
     
     # Run benchmark
-    runner = BenchmarkRunner(config)
+    runner = BenchmarkRunner(config, cache_path=cache)
     experiment = runner.run()
     
     # Save results
