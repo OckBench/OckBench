@@ -263,6 +263,16 @@ Examples:
         help="Directory for log files",
     )
 
+    # Resume / caching
+    parser.add_argument(
+        "--cache",
+        type=str,
+        default=None,
+        help="Path to a JSONL cache file for incremental saving and resume. "
+             "Results are appended as each problem completes. On restart, "
+             "completed problems are skipped automatically.",
+    )
+
     # Metadata
     parser.add_argument(
         "--experiment-name",
@@ -352,6 +362,7 @@ def build_config(args: argparse.Namespace) -> Dict[str, Any]:
         "execution_timeout": args.execution_timeout,
         "experiment_name": args.experiment_name,
         "notes": args.notes,
+        "cache": args.cache,
     }
 
     # Handle boolean flags with negation options

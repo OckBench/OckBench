@@ -1,48 +1,35 @@
 #!/bin/bash
 #
-# Run MathBench_Top200_All on locally-served models (vLLM/SGLang/LMDeploy).
+# Lite test version of run_mathbench_local_models.sh
+# Uses test_small.jsonl (10 problems) and Qwen3-8B with small context window.
 #
-# Setup:
-#   1. Clone the repo and install dependencies:
-#      git clone <repo_url> && cd OckBench
-#      python -m venv .venv && source .venv/bin/activate
-#      uv pip install -r requirements.txt
-#
-#   2. Start your model server (e.g., vLLM):
-#      vllm serve <model_name> --port 8000 --tensor-parallel-size <N>
-#
-#   3. Edit BASE_URL below to match your server, then run:
-#      ./scripts/run_mathbench_local_models.sh [--dry-run]
 
 set -e
 
 cd "$(dirname "$0")/.."
 source .venv/bin/activate
 
-DATASET="data/MathBench_Top200_All.jsonl"
+DATASET="data/test_small.jsonl"
 EVALUATOR="math"
-CONCURRENCY=64
-TIMEOUT=3600
+CONCURRENCY=5
+TIMEOUT=300
 DRY_RUN=false
 
-# [[ "$1" == "--dry-run" ]] && DRY_RUN=true
-
-MODEL=${1:-"Qwen/Qwen3-235B-A22B-Instruct-2507"}
-MAX_TOKENS=${2:-"262144"}    
+[[ "$1" == "--dry-run" ]] && DRY_RUN=true
 
 # =============================================================================
 # CONFIGURE YOUR SERVER HERE
 # =============================================================================
 BASE_URL="http://localhost:8000/v1"
-API_KEY="dummy"  # vLLM doesn't require a real key
-
-echo "========================================"
-echo "MathBench Local Models Sweep"
-echo "Server: $BASE_URL"
-echo "========================================"
+API_KEY="dummy"
 
 CACHE_DIR="cache"
 mkdir -p "$CACHE_DIR"
+
+echo "========================================"
+echo "MathBench Local Models Sweep (TEST)"
+echo "Server: $BASE_URL"
+echo "========================================"
 
 run() {
     local model=$1
@@ -76,6 +63,7 @@ run() {
         --max-output-tokens $max_tokens \
         --concurrency $CONCURRENCY \
         --timeout $TIMEOUT \
+        --enforce-output-format \
         --cache $cache_file \
         $thinking_flag"
 
@@ -87,40 +75,15 @@ run() {
 }
 
 # =============================================================================
-# MODEL CONFIGURATIONS
+# TEST MODEL CONFIGURATIONS (small model, small context)
 # =============================================================================
-run $MODEL $MAX_TOKENS
 
-# run "Qwen/Qwen3-235B-A22B-Instruct-2507" 262144
-# GLM-4.7 series (max context: 202752)
-# run "zai-org/GLM-4.7" 202752
-# run "zai-org/GLM-4.7-Flash" 202752
-# GLM-4.7 series (max context: 202752) — run with thinking on and off
-run "zai-org/GLM-4.7" 202752 true
-run "zai-org/GLM-4.7" 202752 false
-run "zai-org/GLM-4.7-Flash" 202752 true
-run "zai-org/GLM-4.7-Flash" 202752 false
-
-# GLM-5 (max context: 202752) — run with thinking on and off
-run "zai-org/GLM-5" 202752 true
-run "zai-org/GLM-5" 202752 false
-
-# DeepSeek-V3.2 (max context: 163840) — run with thinking on and off
-run "deepseek-ai/DeepSeek-V3.2" 163840 true
-run "deepseek-ai/DeepSeek-V3.2" 163840 false
-
-# Kimi-K2 series (max context: 262144)
-run "moonshotai/Kimi-K2-Instruct" 262144
-run "moonshotai/Kimi-K2-Thinking" 262144
-
-# Kimi-K2.5 (max context: 262144)
-run "moonshotai/Kimi-K2.5" 262144
-
-# # Qwen3-235B-A22B series (max context: 262144)
-# run "Qwen/Qwen3-235B-A22B-Instruct-2507" 262144
-# run "Qwen/Qwen3-235B-A22B-Thinking-2507" 262144
+# Qwen3-8B with thinking on and off
+run "Qwen/Qwen3-8B" 4096 true
+run "Qwen/Qwen3-8B" 4096 false
 
 echo ""
 echo "========================================"
 echo "Complete. Results in results/"
+echo "Cache files in $CACHE_DIR/"
 echo "========================================"
