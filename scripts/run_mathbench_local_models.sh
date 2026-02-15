@@ -91,6 +91,7 @@ run() {
 # =============================================================================
 run $MODEL $MAX_TOKENS
 
+exit 0
 # run "Qwen/Qwen3-235B-A22B-Instruct-2507" 262144
 # GLM-4.7 series (max context: 202752)
 # run "zai-org/GLM-4.7" 202752
