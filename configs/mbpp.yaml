@@ -23,7 +23,6 @@ max_retries: 3
 
 # Evaluation configuration
 evaluator_type: code  # Use code evaluator instead of math
-enforce_output_format: true  # Guide model to use markdown code blocks
 execution_timeout: 10  # Timeout for code execution in seconds
 include_challenge_tests: true  # Include challenge test cases
 

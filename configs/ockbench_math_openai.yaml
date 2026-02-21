@@ -24,7 +24,6 @@ max_retries: 3
 
 # Evaluation configuration
 evaluator_type: math
-enforce_output_format: true  # Recommended: improves answer extraction accuracy
 
 # Optional metadata
 experiment_name: ockbench_math_gpt5

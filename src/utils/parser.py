@@ -7,48 +7,17 @@ from pathlib import Path
 from typing import Dict, Any
 
 
-# Provider presets with default values
-# Note: max_output_tokens and max_context_window are mutually exclusive
-PROVIDER_PRESETS = {
-    "openai": {
-        "provider": "openai",
-        "concurrency": 20,
-        "timeout": 120,
-        "max_retries": 3,
-        "max_output_tokens": 4096,
-    },
-    "gemini": {
-        "provider": "gemini",
-        "concurrency": 20,
-        "timeout": 300,
-        "max_retries": 3,
-        "temperature": 0.0,
-        "max_output_tokens": 8192,
-    },
-    "generic": {
-        "provider": "generic",
-        "base_url": "http://localhost:8000/v1",
-        "concurrency": 200,
-        "timeout": 3600,  # 60 minutes
-        "max_retries": 3,
-        "temperature": 0.0,
-        "max_context_window": 40960,
-    },
-}
-
 # Task presets with default values
 TASK_PRESETS = {
     "math": {
         "dataset_path": "data/OckBench_math.jsonl",
         "dataset_name": "OckBench_math",
         "evaluator_type": "math",
-        "enforce_output_format": True,
     },
     "coding": {
         "dataset_path": "data/OckBench_coding.jsonl",
         "dataset_name": "OckBench_coding",
         "evaluator_type": "code",
-        "enforce_output_format": True,
         "execution_timeout": 10,
         "include_challenge_tests": True,
     },
@@ -56,7 +25,6 @@ TASK_PRESETS = {
         "dataset_path": "data/GPQA_Diamond.jsonl",
         "dataset_name": "GPQA_Diamond",
         "evaluator_type": "science",
-        "enforce_output_format": True,
     },
 }
 
@@ -212,24 +180,6 @@ Examples:
         default=None,
         help="Type of evaluator to use",
     )
-    parser.add_argument(
-        "--enforce-output-format",
-        action="store_true",
-        default=None,
-        help="Add instructions to prompt to enforce consistent output format",
-    )
-    parser.add_argument(
-        "--no-enforce-output-format",
-        action="store_true",
-        help="Disable output format enforcement",
-    )
-    parser.add_argument(
-        "--custom-format-instruction",
-        type=str,
-        default=None,
-        help="Custom format instruction (overrides default)",
-    )
-
     # Code evaluation specific
     parser.add_argument(
         "--execution-timeout",
@@ -312,7 +262,6 @@ def build_config(args: argparse.Namespace) -> Dict[str, Any]:
     1. CLI arguments
     2. Config file
     3. Task preset
-    4. Provider preset
 
     Args:
         args: Parsed argument namespace.
@@ -322,15 +271,11 @@ def build_config(args: argparse.Namespace) -> Dict[str, Any]:
     """
     config = {}
 
-    # 1. Apply provider preset
-    provider_preset = PROVIDER_PRESETS.get(args.provider, {})
-    config.update(provider_preset)
-
-    # 2. Apply task preset
+    # 1. Apply task preset
     task_preset = TASK_PRESETS.get(args.task, {})
     config.update(task_preset)
 
-    # 3. Apply config file if provided
+    # 2. Apply config file if provided
     if args.config:
         import yaml
         config_path = Path(args.config)
@@ -343,6 +288,7 @@ def build_config(args: argparse.Namespace) -> Dict[str, Any]:
 
     # 4. Apply CLI overrides (only non-None values)
     cli_overrides = {
+        "provider": args.provider,
         "model": args.model,
         "api_key": args.api_key,
         "base_url": args.base_url,
@@ -358,7 +304,6 @@ def build_config(args: argparse.Namespace) -> Dict[str, Any]:
         "timeout": args.timeout,
         "max_retries": args.max_retries,
         "evaluator_type": args.evaluator_type,
-        "custom_format_instruction": args.custom_format_instruction,
         "execution_timeout": args.execution_timeout,
         "experiment_name": args.experiment_name,
         "notes": args.notes,
@@ -366,11 +311,6 @@ def build_config(args: argparse.Namespace) -> Dict[str, Any]:
     }
 
     # Handle boolean flags with negation options
-    if args.no_enforce_output_format:
-        cli_overrides["enforce_output_format"] = False
-    elif args.enforce_output_format:
-        cli_overrides["enforce_output_format"] = True
-
     if args.no_include_challenge_tests:
         cli_overrides["include_challenge_tests"] = False
     elif args.include_challenge_tests:

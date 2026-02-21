@@ -181,8 +181,6 @@ class BenchmarkRunner:
 
         formatted_prompt = format_prompt(
             problem=problem.problem,
-            enforce_format=self.config.enforce_output_format,
-            custom_instruction=self.config.custom_format_instruction,
             evaluator_type=self.config.evaluator_type,
             test_cases=test_cases_for_prompt
         )

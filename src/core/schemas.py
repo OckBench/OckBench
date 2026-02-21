@@ -34,8 +34,6 @@ class BenchmarkConfig(BaseModel):
     
     # Evaluation config
     evaluator_type: str = Field("math", description="Type of evaluator to use")
-    enforce_output_format: bool = Field(False, description="Add instructions to prompt to enforce consistent output format")
-    custom_format_instruction: Optional[str] = Field(None, description="Custom format instruction (overrides default)")
     
     # Code evaluation specific
     execution_timeout: int = Field(5, gt=0, description="Timeout for code execution in seconds")
@@ -58,7 +56,10 @@ class BenchmarkConfig(BaseModel):
             )
         if not has_max_output and not has_max_context:
             raise ValueError(
-                "Either max_output_tokens or max_context_window must be set."
+                "Either max_output_tokens or max_context_window must be set. "
+                "Use --max-output-tokens for a fixed output budget, or --max-context-window "
+                "to dynamically compute output tokens from the context window size. "
+                "Make sure the value does not exceed your model's maximum supported capacity."
             )
         return self
 
