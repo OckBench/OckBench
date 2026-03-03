@@ -1,0 +1,16 @@
+# OckBench - OpenAI
+# Switch task by changing dataset_path and evaluator_type:
+#   math:    data/OckBench_math.jsonl    + evaluator_type: math
+#   coding:  data/OckBench_coding.jsonl  + evaluator_type: code
+#   science: data/OckBench_science.jsonl + evaluator_type: science
+
+dataset_path: data/OckBench_math.jsonl
+dataset_name: OckBench_math
+provider: openai
+model: gpt-5.2
+max_output_tokens: 128000
+reasoning_effort: medium
+concurrency: 10
+timeout: 600
+max_retries: 3
+evaluator_type: math

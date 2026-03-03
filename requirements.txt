@@ -1,0 +1,16 @@
+# Core dependencies
+openai
+google-genai
+pydantic
+pyyaml
+
+# Async and utilities
+aiohttp
+tqdm
+
+# Optional: for better logging
+coloredlogs
+
+# Optional: for accurate token counting (recommended for max_context_window feature)
+tiktoken
+

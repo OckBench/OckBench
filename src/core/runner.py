@@ -1,0 +1,491 @@
+"""
+Main benchmark runner with concurrent API calls and result aggregation.
+"""
+import asyncio
+import json
+import logging
+import math
+import time
+from pathlib import Path
+from typing import List, Optional, Set
+from tqdm.asyncio import tqdm as atqdm
+
+from .config import load_config
+from .schemas import (
+    BenchmarkConfig, Problem, EvaluationResult,
+    ExperimentResult, ExperimentSummary, TokenUsage
+)
+from ..loaders.base import get_loader
+from ..models.base import BaseModelClient
+from ..models.openai_api import OpenAIClient
+from ..models.gemini_api import GeminiClient
+from ..evaluators.math_eval import get_evaluator
+from ..utils.logger import setup_logger, get_experiment_filename
+
+
+logger = logging.getLogger(__name__)
+
+
+class BenchmarkRunner:
+    """
+    Main runner for benchmark experiments.
+    
+    Orchestrates:
+    - Loading data and config
+    - Creating model client
+    - Running concurrent API calls
+    - Evaluating responses
+    - Aggregating and saving results
+    """
+    
+    def __init__(self, config: BenchmarkConfig, cache_path: Optional[str] = None):
+        """
+        Initialize benchmark runner.
+
+        Args:
+            config: Benchmark configuration
+            cache_path: Path to JSONL cache file for incremental saving and resume
+        """
+        self.config = config
+        self.cache_path = cache_path
+        self.client: Optional[BaseModelClient] = None
+        self.evaluator = None
+        self.problems: List[Problem] = []
+        self._cached_results: List[EvaluationResult] = []
+    
+    def _load_cache(self) -> Set:
+        """Load completed problem IDs from cache file.
+
+        Returns:
+            Set of problem IDs that completed successfully (no error).
+        """
+        cache_file = Path(self.cache_path)
+        if not cache_file.exists():
+            return set()
+
+        completed_ids = set()
+        self._cached_results = []
+        line_num = 0
+        for line in cache_file.read_text(encoding='utf-8').strip().split('\n'):
+            line_num += 1
+            if not line.strip():
+                continue
+            try:
+                data = json.loads(line)
+                result = EvaluationResult(**data)
+                # Only skip problems that completed without error
+                if not result.error:
+                    completed_ids.add(result.problem_id)
+                    self._cached_results.append(result)
+                else:
+                    logger.debug(f"Cache line {line_num}: problem {result.problem_id} had error, will retry")
+            except Exception as e:
+                logger.warning(f"Cache line {line_num}: failed to parse, skipping: {e}")
+
+        logger.info(f"Loaded {len(completed_ids)} completed results from cache")
+        return completed_ids
+
+    def _append_to_cache(self, result: EvaluationResult):
+        """Append a single result to the cache file."""
+        if not self.cache_path:
+            return
+        cache_file = Path(self.cache_path)
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(cache_file, 'a', encoding='utf-8') as f:
+            f.write(result.model_dump_json() + '\n')
+            f.flush()
+
+    def _create_client(self) -> BaseModelClient:
+        """
+        Create appropriate API client based on provider.
+        
+        Returns:
+            BaseModelClient: Initialized API client
+        """
+        client_kwargs = {
+            'model': self.config.model,
+            'api_key': self.config.api_key,
+            'base_url': self.config.base_url,
+            'timeout': self.config.timeout,
+            'max_retries': self.config.max_retries,
+        }
+        
+        if self.config.provider == 'openai':
+            return OpenAIClient(**client_kwargs)
+        elif self.config.provider == 'gemini':
+            return GeminiClient(**client_kwargs)
+        elif self.config.provider == 'generic':
+            # Generic uses OpenAI-compatible API
+            if not self.config.base_url:
+                raise ValueError("base_url is required for generic provider")
+            return OpenAIClient(**client_kwargs)
+        else:
+            raise ValueError(f"Unknown provider: {self.config.provider}")
+    
+    def _calculate_max_output_tokens(self, prompt: str) -> int:
+        """
+        Calculate max_output_tokens based on config and prompt length.
+
+        Either max_context_window or max_output_tokens is set (mutually exclusive).
+        If max_context_window is set, calculates dynamically.
+        Otherwise, uses the configured max_output_tokens.
+
+        Args:
+            prompt: Input prompt text
+
+        Returns:
+            int: Maximum output tokens for this request
+        """
+        if self.config.max_context_window is not None:
+            # Dynamic calculation based on context window
+            from ..utils.token_counter import estimate_tokens
+
+            try:
+                input_tokens = estimate_tokens(prompt, self.config.model)
+            except Exception as e:
+                logger.warning(f"Failed to estimate tokens, using rough estimate: {e}")
+                # Rough estimate: ~4 chars per token
+                input_tokens = len(prompt) // 4
+
+            # Calculate available output tokens with safety buffer
+            # Buffer accounts for: chat template tokens, tokenizer differences, etc.
+            safety_buffer = 256
+            max_output = self.config.max_context_window - input_tokens - safety_buffer
+
+            # Ensure we have at least some minimum output space
+            min_output = 100
+            max_output = max(max_output, min_output)
+
+            logger.debug(
+                f"Dynamic max_output_tokens: {max_output} "
+                f"(context: {self.config.max_context_window}, input: {input_tokens})"
+            )
+
+            return max_output
+        else:
+            # Use configured max_output_tokens (guaranteed to be set by schema validation)
+            return self.config.max_output_tokens
+    
+    async def _process_single_problem(
+        self,
+        problem: Problem,
+        semaphore: asyncio.Semaphore,
+        pbar: Optional[atqdm] = None
+    ) -> EvaluationResult:
+        """Process a single problem with rate limiting."""
+        from ..utils.prompt_formatter import format_prompt
+
+        # Format prompt ONCE before try block (available for both success and error cases)
+        test_cases_for_prompt = None
+        if self.config.evaluator_type == "code":
+            test_cases_for_prompt = problem.metadata.get('test_list', [])
+
+        formatted_prompt = format_prompt(
+            problem=problem.problem,
+            evaluator_type=self.config.evaluator_type,
+            test_cases=test_cases_for_prompt
+        )
+
+        async with semaphore:
+            try:
+                max_output_tokens = self._calculate_max_output_tokens(formatted_prompt)
+
+                # Generate response with the formatted prompt
+                response = await self.client.generate(
+                    prompt=formatted_prompt,
+                    temperature=self.config.temperature,
+                    max_output_tokens=max_output_tokens,
+                    reasoning_effort=self.config.reasoning_effort,
+                    top_p=self.config.top_p,
+                    enable_thinking=self.config.enable_thinking
+                )
+                
+                # Check for API error
+                if response.error:
+                    logger.error(f"Error for problem {problem.id}: {response.error}")
+                    result = EvaluationResult(
+                        problem_id=problem.id,
+                        question=problem.problem,  # Original problem text
+                        formatted_prompt=formatted_prompt,  # Formatted prompt with instructions
+                        ground_truth=problem.answer,
+                        model_response=response.text or "",
+                        extracted_answer=None,
+                        correct=False,
+                        tokens=response.tokens,
+                        latency=response.latency,
+                        error=response.error,
+                        extraction_method="error"
+                    )
+                else:
+                    # Evaluate response using unified interface
+                    if self.config.evaluator_type == "code":
+                        eval_result = self.evaluator.evaluate(response.text, problem.metadata.get('test_cases', []))
+                    else:
+                        eval_result = self.evaluator.evaluate(response.text, problem.answer)
+
+                    result = EvaluationResult(
+                        problem_id=problem.id,
+                        question=problem.problem,
+                        formatted_prompt=formatted_prompt,
+                        ground_truth=problem.answer,
+                        model_response=response.text,
+                        extracted_answer=eval_result.extracted_answer,
+                        correct=eval_result.is_correct,
+                        tokens=response.tokens,
+                        latency=response.latency,
+                        extraction_method=eval_result.extraction_method,
+                        tests_passed=eval_result.tests_passed,
+                        tests_total=eval_result.tests_total,
+                        execution_error=eval_result.execution_error
+                    )
+                
+                self._append_to_cache(result)
+                if pbar:
+                    pbar.update(1)
+
+                return result
+
+            except Exception as e:
+                logger.error(f"Exception processing problem {problem.id}: {e}")
+                result = EvaluationResult(
+                    problem_id=problem.id,
+                    question=problem.problem,
+                    formatted_prompt=formatted_prompt,
+                    ground_truth=problem.answer,
+                    model_response="",
+                    extracted_answer=None,
+                    correct=False,
+                    tokens=TokenUsage(prompt_tokens=0, answer_tokens=0, reasoning_tokens=0, output_tokens=0, total_tokens=0),
+                    latency=0,
+                    error=str(e),
+                    extraction_method="exception"
+                )
+                self._append_to_cache(result)
+                if pbar:
+                    pbar.update(1)
+                return result
+    
+    async def _run_benchmark_async(self) -> List[EvaluationResult]:
+        """
+        Run benchmark on all problems concurrently.
+        
+        Returns:
+            List[EvaluationResult]: Results for all problems
+        """
+        # Create semaphore for concurrency control
+        semaphore = asyncio.Semaphore(self.config.concurrency)
+        
+        # Create progress bar
+        pbar = atqdm(
+            total=len(self.problems),
+            desc=f"Running {self.config.model} on {len(self.problems)} problems",
+            unit="problem"
+        )
+        
+        # Process all problems concurrently
+        tasks = [
+            self._process_single_problem(problem, semaphore, pbar)
+            for problem in self.problems
+        ]
+        
+        results = await asyncio.gather(*tasks)
+        
+        pbar.close()
+        
+        return results
+    
+    def _compute_summary(
+        self,
+        results: List[EvaluationResult],
+        duration: float
+    ) -> ExperimentSummary:
+        """
+        Compute summary statistics from results.
+        
+        Args:
+            results: List of evaluation results
+            duration: Total experiment duration
+        
+        Returns:
+            ExperimentSummary: Summary statistics
+        """
+        total_problems = len(results)
+        correct_count = sum(1 for r in results if r.correct)
+        accuracy = (correct_count / total_problems * 100) if total_problems > 0 else 0
+        
+        total_prompt_tokens = sum(r.tokens.prompt_tokens for r in results)
+        total_answer_tokens = sum(r.tokens.answer_tokens for r in results)
+        total_reasoning_tokens = sum(r.tokens.reasoning_tokens for r in results)
+        total_output_tokens = sum(r.tokens.output_tokens for r in results)
+        total_tokens = sum(r.tokens.total_tokens for r in results)
+        
+        avg_tokens = total_tokens / total_problems if total_problems > 0 else 0
+        avg_latency = sum(r.latency for r in results) / total_problems if total_problems > 0 else 0
+        
+        error_count = sum(1 for r in results if r.error)
+
+        # OckScore = Accuracy - 10 * log(AvgTokens / 10000 + 1)
+        ock_score = accuracy - 10 * math.log(avg_tokens / 10000 + 1)
+
+        return ExperimentSummary(
+            total_problems=total_problems,
+            correct_count=correct_count,
+            accuracy=accuracy,
+            total_tokens=total_tokens,
+            total_prompt_tokens=total_prompt_tokens,
+            total_answer_tokens=total_answer_tokens,
+            total_reasoning_tokens=total_reasoning_tokens,
+            total_output_tokens=total_output_tokens,
+            avg_tokens_per_problem=avg_tokens,
+            avg_latency=avg_latency,
+            total_duration=duration,
+            error_count=error_count,
+            ock_score=ock_score
+        )
+    
+    def run(self) -> ExperimentResult:
+        """
+        Run complete benchmark experiment.
+        
+        Returns:
+            ExperimentResult: Complete experiment results
+        """
+        logger.info("=" * 80)
+        logger.info("Starting OckBench Experiment")
+        logger.info("=" * 80)
+        logger.info(f"Dataset: {self.config.dataset_path}")
+        logger.info(f"Model: {self.config.model}")
+        logger.info(f"Provider: {self.config.provider}")
+        logger.info(f"Temperature: {self.config.temperature}")
+        logger.info(f"Max Output Tokens: {self.config.max_output_tokens}")
+        logger.info(f"Concurrency: {self.config.concurrency}")
+        logger.info("=" * 80)
+        
+        start_time = time.time()
+        
+        # Load dataset
+        logger.info("Loading dataset...")
+        loader = get_loader(filepath=self.config.dataset_path)
+        self.problems = loader.load()
+        total_problems = len(self.problems)
+        logger.info(f"Loaded {total_problems} problems")
+
+        # Resume from cache if available
+        if self.cache_path:
+            completed_ids = self._load_cache()
+            if completed_ids:
+                self.problems = [p for p in self.problems if p.id not in completed_ids]
+                logger.info(f"Resuming: {len(completed_ids)} cached, {len(self.problems)} remaining")
+
+        # Create client
+        logger.info("Initializing API client...")
+        self.client = self._create_client()
+
+        # Create evaluator
+        logger.info("Initializing evaluator...")
+        evaluator_kwargs = {}
+        if self.config.evaluator_type == "code":
+            evaluator_kwargs['timeout'] = self.config.execution_timeout
+        self.evaluator = get_evaluator(self.config.evaluator_type, **evaluator_kwargs)
+
+        # Run benchmark on remaining problems
+        if self.problems:
+            logger.info("Running benchmark...")
+            new_results = asyncio.run(self._run_benchmark_async())
+        else:
+            logger.info("All problems already cached, no work to do")
+            new_results = []
+
+        # Combine cached + new results
+        results = self._cached_results + list(new_results)
+        
+        # Compute summary
+        duration = time.time() - start_time
+        summary = self._compute_summary(results, duration)
+        
+        # Log summary
+        logger.info("=" * 80)
+        logger.info("Experiment Complete!")
+        logger.info("=" * 80)
+        logger.info(f"Accuracy: {summary.accuracy:.2f}% ({summary.correct_count}/{summary.total_problems})")
+        logger.info(f"Total Tokens: {summary.total_tokens:,}")
+        logger.info(f"  - Prompt: {summary.total_prompt_tokens:,}")
+        logger.info(f"  - Answer: {summary.total_answer_tokens:,}")
+        logger.info(f"  - Reasoning: {summary.total_reasoning_tokens:,}")
+        logger.info(f"  - Output: {summary.total_output_tokens:,}")
+        logger.info(f"Avg Tokens/Problem: {summary.avg_tokens_per_problem:.1f}")
+        logger.info(f"OckScore: {summary.ock_score:.2f}")
+        logger.info(f"Avg Latency: {summary.avg_latency:.2f}s")
+        logger.info(f"Total Duration: {summary.total_duration:.2f}s")
+        if summary.error_count > 0:
+            logger.warning(f"Errors: {summary.error_count}")
+        logger.info("=" * 80)
+        
+        # Get dataset name
+        dataset_name = self.config.dataset_name or Path(self.config.dataset_path).stem
+        
+        # Create experiment result
+        experiment = ExperimentResult(
+            config=self.config,
+            results=results,
+            summary=summary,
+            dataset_name=dataset_name
+        )
+        
+        return experiment
+
+
+def run_benchmark(
+    config_path: Optional[str] = None,
+    output_dir: str = "results",
+    log_dir: Optional[str] = None,
+    cache: Optional[str] = None,
+    **config_overrides
+) -> ExperimentResult:
+    """
+    Main entry point for running benchmarks.
+    
+    Args:
+        config_path: Path to config YAML file (optional)
+        output_dir: Directory to save results
+        log_dir: Directory to save logs (optional)
+        **config_overrides: Config parameters to override
+    
+    Returns:
+        ExperimentResult: Complete experiment results
+    """
+    # Pop cache from overrides if passed through config dict (not a BenchmarkConfig field)
+    config_overrides.pop('cache', None)
+
+    # Load config
+    config = load_config(config_path, **config_overrides)
+    
+    # Setup logging
+    dataset_name = config.dataset_name or Path(config.dataset_path).stem
+    from ..utils.logger import get_log_filename
+    
+    if log_dir:
+        log_file = Path(log_dir) / get_log_filename(dataset_name, config.model)
+    else:
+        log_file = None
+    
+    setup_logger(log_file=str(log_file) if log_file else None)
+    
+    # Run benchmark
+    runner = BenchmarkRunner(config, cache_path=cache)
+    experiment = runner.run()
+    
+    # Save results
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    result_file = output_path / get_experiment_filename(
+        experiment.dataset_name,
+        config.model
+    )
+    
+    experiment.save_to_file(str(result_file))
+    logger.info(f"Results saved to: {result_file}")
+    
+    return experiment
+

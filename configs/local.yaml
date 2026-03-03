@@ -1,0 +1,19 @@
+# OckBench - Local Model (vLLM)
+# Switch task by changing dataset_path and evaluator_type:
+#   math:    data/OckBench_math.jsonl    + evaluator_type: math
+#   coding:  data/OckBench_coding.jsonl  + evaluator_type: code
+#   science: data/OckBench_science.jsonl + evaluator_type: science
+
+dataset_path: data/OckBench_math.jsonl
+dataset_name: OckBench_math
+provider: generic
+model: Qwen/Qwen3-4B
+base_url: http://localhost:8000/v1
+api_key: dummy
+temperature: 0.0
+max_context_window: 40960
+enable_thinking: true
+concurrency: 200
+timeout: 3000
+max_retries: 2
+evaluator_type: math
