@@ -1,7 +1,6 @@
 workdir/
 cache/
 log/
-CLAUDE.md
 # Python
 __pycache__/
 *.py[cod]
@@ -25,6 +24,7 @@ wheels/
 *.egg
 
 # Virtual environments
+.venv/
 venv/
 env/
 ENV/
@@ -41,7 +41,11 @@ ENV/
 logs/
 
 # Results
-results/*.json
+results/
+
+# Data artifacts
+*.bak
+*.parquet
 
 # API keys and secrets
 .env

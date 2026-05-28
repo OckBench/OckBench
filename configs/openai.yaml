@@ -6,8 +6,10 @@
 
 dataset_path: data/OckBench_math.jsonl
 dataset_name: OckBench_math
-provider: openai
+provider: chat_completion
 model: gpt-5.2
+# api_key: pass via CLI: --api-key $OPENAI_API_KEY
+base_url: https://api.openai.com/v1
 max_output_tokens: 128000
 reasoning_effort: medium
 concurrency: 10

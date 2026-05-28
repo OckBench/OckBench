@@ -17,6 +17,7 @@ import json
 import logging
 import math
 import os
+import re
 import sys
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -106,8 +107,10 @@ class LLMEvaluator:
         model: str = DEFAULT_MODEL,
         concurrency: int = 5,
         timeout: int = 60,
+        max_tokens: int = 500,
         max_retries: int = 3,
-        base_url: Optional[str] = None
+        base_url: Optional[str] = None,
+        disable_thinking: bool = False,
     ):
         client_kwargs = {}
         if api_key:
@@ -120,7 +123,13 @@ class LLMEvaluator:
         self.model = model
         self.concurrency = concurrency
         self.timeout = timeout
+        self.max_tokens = max_tokens
         self.max_retries = max_retries
+        # Qwen3-family models think by default; disabling makes them emit the
+        # schema directly and keeps max_tokens=500 sufficient.
+        self._extra_body: Dict[str, Any] = {}
+        if disable_thinking:
+            self._extra_body["chat_template_kwargs"] = {"enable_thinking": False}
 
     async def evaluate_single(
         self,
@@ -144,27 +153,22 @@ class LLMEvaluator:
 
             for attempt in range(self.max_retries):
                 try:
+                    create_kwargs = dict(
+                        model=self.model,
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.0,
+                        max_tokens=self.max_tokens,
+                    )
+                    if self._extra_body:
+                        create_kwargs["extra_body"] = self._extra_body
                     response = await asyncio.wait_for(
-                        self.client.chat.completions.create(
-                            model=self.model,
-                            messages=[{"role": "user", "content": prompt}],
-                            temperature=0.0,
-                            max_tokens=500,
-                        ),
+                        self.client.chat.completions.create(**create_kwargs),
                         timeout=self.timeout
                     )
 
                     content = response.choices[0].message.content.strip()
 
-                    # Parse JSON response
-                    # Handle potential markdown code blocks
-                    if content.startswith("```"):
-                        content = content.split("```")[1]
-                        if content.startswith("json"):
-                            content = content[4:]
-                        content = content.strip()
-
-                    result = json.loads(content)
+                    result = parse_json_judgment(content)
 
                     llm_correct = result.get("correct", False)
                     llm_extracted = result.get("extracted_answer")
@@ -323,6 +327,33 @@ def load_result_file(filepath: str) -> Dict[str, Any]:
     """Load a result JSON file."""
     with open(filepath, 'r', encoding='utf-8') as f:
         return json.load(f)
+
+
+def parse_json_judgment(content: str) -> Dict[str, Any]:
+    """Parse the judge JSON even if a local thinking model emits extra text."""
+    content = content.strip()
+
+    if content.startswith("```"):
+        parts = content.split("```")
+        if len(parts) >= 3:
+            fenced = parts[1].strip()
+            if fenced.startswith("json"):
+                fenced = fenced[4:].strip()
+            content = fenced
+
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        pass
+
+    matches = re.findall(r"\{.*?\}", content, flags=re.DOTALL)
+    for match in reversed(matches):
+        try:
+            return json.loads(match)
+        except json.JSONDecodeError:
+            continue
+
+    raise json.JSONDecodeError("No JSON object found in judge response", content, 0)
 
 
 def save_evaluation(
@@ -521,6 +552,19 @@ async def main():
         default=60,
         help="Request timeout in seconds (default: 60)"
     )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=500,
+        help="Max tokens for each judge response (default: 500)"
+    )
+    parser.add_argument(
+        "--disable-thinking",
+        action="store_true",
+        help="Pass chat_template_kwargs.enable_thinking=False via extra_body "
+             "(for Qwen3-style thinking models on vLLM/SGLang). Keeps the judge "
+             "direct so max_tokens=500 is enough.",
+    )
 
     args = parser.parse_args()
 
@@ -536,7 +580,9 @@ async def main():
         model=args.model,
         concurrency=args.concurrency,
         timeout=args.timeout,
-        base_url=args.base_url
+        max_tokens=args.max_tokens,
+        base_url=args.base_url,
+        disable_thinking=args.disable_thinking,
     )
 
     # Process each file

@@ -1,29 +1,19 @@
-"""
-OpenAI API client implementation.
-
-Supports:
-- Official OpenAI API
-- OpenAI-compatible APIs (vLLM, SGLang, local serving)
-- O1/O3 models with reasoning tokens
-"""
+"""OpenAI-compatible chat completions client (OpenAI, vLLM, SGLang, OpenRouter)."""
 import logging
 from typing import Optional
+
+import httpx
 from openai import AsyncOpenAI
 
-from .base import BaseModelClient
 from ..core.schemas import ModelResponse, TokenUsage
-
+from .base import BaseModelClient
 
 logger = logging.getLogger(__name__)
 
 
 class OpenAIClient(BaseModelClient):
-    """
-    Client for OpenAI API and OpenAI-compatible endpoints.
-    
-    Supports standard models (GPT-4, GPT-3.5) and reasoning models (O1, O3).
-    """
-    
+    """Client for any OpenAI-compatible chat completions endpoint."""
+
     def __init__(
         self,
         model: str,
@@ -33,32 +23,24 @@ class OpenAIClient(BaseModelClient):
         max_retries: int = 3,
         **kwargs
     ):
-        """
-        Initialize OpenAI client.
-        
-        Args:
-            model: Model name (e.g., 'gpt-5', 'o3')
-            api_key: OpenAI API key
-            base_url: Base URL for API (for compatible endpoints)
-            timeout: Request timeout in seconds
-            max_retries: Maximum retry attempts
-            **kwargs: Additional parameters
-        """
         super().__init__(model, api_key, base_url, timeout, max_retries, **kwargs)
-        
-        # Initialize OpenAI client
-        # Let SDK read OPENAI_API_KEY from environment if not provided
-        client_kwargs = {'timeout': timeout}
+
+        # max_retries=0: BaseModelClient.generate owns retry; SDK's own loop
+        # would stack with ours (up to 9 effective attempts).
+        # read timeout = per-chunk gap in streaming, not total deadline.
+        client_kwargs = {
+            'timeout': httpx.Timeout(connect=30.0, read=float(timeout), write=60.0, pool=30.0),
+            'max_retries': 0,
+        }
         if api_key:
             client_kwargs['api_key'] = api_key
         if base_url:
             client_kwargs['base_url'] = base_url
-            # Local servers may not need a real key
             if 'api_key' not in client_kwargs:
                 client_kwargs['api_key'] = 'dummy-key'
-        
+
         self.client = AsyncOpenAI(**client_kwargs)
-    
+
     async def _call_api(
         self,
         prompt: str,
@@ -66,40 +48,23 @@ class OpenAIClient(BaseModelClient):
         max_output_tokens: int = 4096,
         **kwargs
     ) -> ModelResponse:
-        """Call OpenAI API."""
-        # Build messages - prompt is already formatted by runner
         messages = [{"role": "user", "content": prompt}]
-        
-        # Build request parameters
+
         request_params = {
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
         }
-        
-        # Handle reasoning models (gpt-5, o1, o3) vs standard models
+
         if self._is_reasoning_model():
-            # Reasoning models use max_completion_tokens and reasoning_effort
             request_params["max_completion_tokens"] = max_output_tokens
-            
             if kwargs.get("reasoning_effort"):
                 request_params["reasoning_effort"] = kwargs["reasoning_effort"]
-            
-            # Reasoning models (gpt-5, o1, o3) don't support temperature, top_p, top_k, 
-            # repeat_penalty and other sampling parameters
-            # Remove these parameters for all reasoning models
             request_params.pop("temperature", None)
-            request_params.pop("top_p", None)
-            request_params.pop("top_k", None)
-            request_params.pop("repeat_penalty", None)
-            # Remove any other sampling-related parameters that might be in kwargs
             for param in ["top_p", "top_k", "repeat_penalty", "frequency_penalty", "presence_penalty"]:
                 kwargs.pop(param, None)
         else:
-            # Standard models use max_tokens
             request_params["max_tokens"] = max_output_tokens
-
-            # Add optional parameters for standard models
             if kwargs.get("top_p") is not None:
                 request_params["top_p"] = kwargs["top_p"]
             if kwargs.get("top_k") is not None:
@@ -109,87 +74,140 @@ class OpenAIClient(BaseModelClient):
             if kwargs.get("presence_penalty") is not None:
                 request_params["presence_penalty"] = kwargs["presence_penalty"]
 
-        # Handle enable_thinking for models that support thinking mode (via extra_body)
-        # Qwen3 uses {"enable_thinking": bool}, DeepSeek uses {"thinking": bool}
-        if kwargs.get("enable_thinking") is not None:
-            if "deepseek" in self.model.lower():
-                thinking_key = "thinking"
-            else:
-                thinking_key = "enable_thinking"
+        base_url_lower = (self.base_url or "").lower()
+        is_deepseek_direct = "deepseek.com" in base_url_lower
+        is_mimo_direct = "xiaomimimo.com" in base_url_lower
+        is_openrouter = "openrouter" in base_url_lower
+
+        if is_mimo_direct:
+            request_params["max_completion_tokens"] = request_params.pop("max_tokens", max_output_tokens)
+            if kwargs.get("enable_thinking") is not None:
+                thinking_type = "enabled" if kwargs["enable_thinking"] else "disabled"
+                request_params["extra_body"] = {"thinking": {"type": thinking_type}}
+        elif is_deepseek_direct:
+            # DeepSeek native API: {"thinking": {"type": "enabled"|"disabled"}}.
+            # Thinking is enabled by default; strip params the docs say are ignored
+            # in thinking mode (temperature, top_p, presence_penalty, frequency_penalty).
+            explicit_thinking = kwargs.get("enable_thinking")
+            thinking_on = explicit_thinking is not False
+            if explicit_thinking is not None:
+                thinking_type = "enabled" if explicit_thinking else "disabled"
+                request_params["extra_body"] = {"thinking": {"type": thinking_type}}
+            if kwargs.get("reasoning_effort"):
+                eb = request_params.setdefault("extra_body", {})
+                eb["reasoning_effort"] = kwargs["reasoning_effort"]
+            if thinking_on:
+                for p in ("temperature", "top_p", "presence_penalty", "frequency_penalty"):
+                    request_params.pop(p, None)
+        elif is_openrouter:
+            if kwargs.get("enable_thinking"):
+                request_params["extra_body"] = {"reasoning": {"enabled": True}}
+            elif kwargs.get("reasoning_effort") and not self._is_reasoning_model():
+                request_params["extra_body"] = {"reasoning": {"effort": kwargs["reasoning_effort"]}}
+        elif kwargs.get("enable_thinking") is not None:
+            # vLLM/SGLang local: chat_template_kwargs
+            thinking_key = "thinking" if "deepseek" in self.model.lower() else "enable_thinking"
             request_params["extra_body"] = {
                 "chat_template_kwargs": {thinking_key: kwargs["enable_thinking"]}
             }
 
-        # Make API call
+        request_params["stream"] = True
+        request_params["stream_options"] = {"include_usage": True}
+
         try:
-            response = await self.client.chat.completions.create(**request_params)
-            
-            # Extract response text
-            text = response.choices[0].message.content or ""
-            finish_reason = response.choices[0].finish_reason
-            
-            # Extract token usage
-            tokens = self._extract_tokens(response)
-            
+            text = ""
+            reasoning_chars = 0
+            finish_reason = None
+            model_name = self.model
+            usage_data = None
+
+            stream = await self.client.chat.completions.create(**request_params)
+            async for chunk in stream:
+                if chunk.model:
+                    model_name = chunk.model
+                if chunk.choices:
+                    delta = chunk.choices[0].delta
+                    if delta and delta.content:
+                        text += delta.content
+                    if delta:
+                        reasoning_delta = getattr(delta, "reasoning_content", None)
+                        if reasoning_delta is None and getattr(delta, "model_extra", None):
+                            reasoning_delta = delta.model_extra.get("reasoning_content")
+                        if reasoning_delta:
+                            reasoning_chars += len(reasoning_delta)
+                    if chunk.choices[0].finish_reason:
+                        finish_reason = chunk.choices[0].finish_reason
+                if chunk.usage:
+                    usage_data = chunk
+
+            if usage_data:
+                tokens = self._extract_tokens(usage_data)
+            else:
+                tokens = TokenUsage(
+                    prompt_tokens=0, answer_tokens=0, reasoning_tokens=0,
+                    output_tokens=0, total_tokens=0,
+                )
+
+            # Surface empty-text outcomes as errors so --cache resume will retry them.
+            # Common on third-party chat-completion proxies + reasoning models: the whole budget is
+            # spent on reasoning_content and the stream ends without ever emitting
+            # a content delta.
+            empty_error = None
+            if not text:
+                if finish_reason == "length":
+                    suffix = " after reasoning_content stream" if reasoning_chars else ""
+                    empty_error = (
+                        "empty_response_length_finish: finish_reason=length with no content "
+                        f"emitted{suffix} (likely reasoning consumed entire output budget)"
+                    )
+                elif tokens.reasoning_tokens > 0 or reasoning_chars > 0:
+                    empty_error = (
+                        "empty_response_reasoning_only: model emitted reasoning tokens but "
+                        "no content (finish_reason="
+                        f"{finish_reason or 'unknown'})"
+                    )
+                elif usage_data is None:
+                    empty_error = "empty_response_no_stream: no usage and no content received"
+                else:
+                    empty_error = (
+                        "empty_response_no_content: stream completed with usage but no content "
+                        f"(finish_reason={finish_reason or 'unknown'})"
+                    )
+
             return ModelResponse(
                 text=text,
                 tokens=tokens,
-                latency=0,  # Will be set by base class
-                model=response.model,
-                finish_reason=finish_reason
+                latency=0,
+                model=model_name,
+                finish_reason=finish_reason or "stop",
+                error=empty_error,
             )
-        
+
         except Exception as e:
             logger.error(f"OpenAI API error: {e}")
             raise
-    
+
     def _extract_tokens(self, response) -> TokenUsage:
-        """
-        Extract token usage from OpenAI response.
-        
-        Args:
-            response: OpenAI API response object
-        
-        Returns:
-            TokenUsage: Token usage information
-        """
         usage = response.usage
-        
-        # Standard token fields
         prompt_tokens = getattr(usage, 'prompt_tokens', 0)
         completion_tokens = getattr(usage, 'completion_tokens', 0)
-        
-        # Reasoning tokens (for o1/o3/gpt-5 models)
-        # These models may have completion_tokens_details with reasoning_tokens
+
         reasoning_tokens = 0
         if hasattr(usage, 'completion_tokens_details'):
             details = usage.completion_tokens_details
             if details and hasattr(details, 'reasoning_tokens'):
                 reasoning_tokens = details.reasoning_tokens or 0
-        
-        # For reasoning models, completion_tokens is the TOTAL output (includes reasoning)
-        # So answer_tokens = completion_tokens - reasoning_tokens
-        # For non-reasoning models, reasoning_tokens is 0, so answer_tokens = completion_tokens
+
         answer_tokens = completion_tokens - reasoning_tokens
-        
-        # output_tokens = reasoning_tokens + answer_tokens = completion_tokens
-        output_tokens = completion_tokens
-        
+
         return TokenUsage(
             prompt_tokens=prompt_tokens,
             answer_tokens=answer_tokens,
             reasoning_tokens=reasoning_tokens,
-            output_tokens=output_tokens,
-            total_tokens=getattr(usage, 'total_tokens', 0)
+            output_tokens=completion_tokens,
+            total_tokens=getattr(usage, 'total_tokens', 0),
         )
-    
+
     def _is_reasoning_model(self) -> bool:
-        """
-        Check if model is a reasoning model (o1, o3, gpt-5).
-        
-        Returns:
-            bool: True if reasoning model
-        """
         model_lower = self.model.lower()
         return any(prefix in model_lower for prefix in ['o1', 'o3', 'o4', 'gpt-5'])
-

@@ -6,10 +6,10 @@
 
 dataset_path: data/OckBench_math.jsonl
 dataset_name: OckBench_math
-provider: generic
+provider: chat_completion
 model: Qwen/Qwen3-4B
-base_url: http://localhost:8000/v1
 api_key: dummy
+base_url: http://localhost:8000/v1
 temperature: 0.0
 max_context_window: 40960
 enable_thinking: true

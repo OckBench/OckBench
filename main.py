@@ -4,11 +4,13 @@ OckBench - LLM Benchmarking Tool for Reasoning Tasks
 
 Main CLI entry point for running benchmarks.
 """
-import sys
 import logging
+import sys
+
+from pydantic import ValidationError
 
 from src.core.runner import run_benchmark
-from src.utils.parser import parse_args, build_config
+from src.utils.parser import build_config, parse_args
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +58,10 @@ def main() -> int:
     except KeyboardInterrupt:
         print("\n\nExperiment interrupted by user")
         return 130
+
+    except (ValueError, ValidationError) as e:
+        print(f"\nConfiguration error: {e}", file=sys.stderr)
+        return 1
 
     except Exception as e:
         print(f"\nError: {e}", file=sys.stderr)

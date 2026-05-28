@@ -39,7 +39,7 @@ git clone https://github.com/OckBench/OckBench.git
 cd OckBench
 uv venv --python 3.12 --managed-python
 source .venv/bin/activate
-uv pip install -r requirements.txt
+uv pip install -e .
 ```
 
 You must specify either `--max-output-tokens` or `--max-context-window` to control generation length:
@@ -51,10 +51,14 @@ Run on OpenAI:
 
 ```bash
 export OPENAI_API_KEY="sk-..."
+export OPENAI_BASE_URL="https://api.openai.com/v1"
 
-python main.py --provider openai --model gpt-5.2 --task math --max-output-tokens 128000
-python main.py --provider openai --model gpt-5.2 --task coding --max-output-tokens 128000
-python main.py --provider openai --model gpt-5.2 --task science --max-output-tokens 128000
+python main.py --model gpt-5.2 --api-key $OPENAI_API_KEY --base-url $OPENAI_BASE_URL \
+    --task math --max-output-tokens 128000
+python main.py --model gpt-5.2 --api-key $OPENAI_API_KEY --base-url $OPENAI_BASE_URL \
+    --task coding --max-output-tokens 128000
+python main.py --model gpt-5.2 --api-key $OPENAI_API_KEY --base-url $OPENAI_BASE_URL \
+    --task science --max-output-tokens 128000
 ```
 
 Run on a local model via [vLLM](https://docs.vllm.ai/en/latest/usage/) (install vLLM first following their official docs):
@@ -65,8 +69,8 @@ vllm serve Qwen/Qwen3-4B --port 8000
 
 # Then run the benchmark
 python main.py \
-    --provider generic \
     --model Qwen/Qwen3-4B \
+    --api-key dummy \
     --base-url http://localhost:8000/v1 \
     --max-context-window 40960 \
     --task math
@@ -84,19 +88,21 @@ Pass `--cache <path>` to save results incrementally. If a run is interrupted, re
 
 ```bash
 # Start a run
-python main.py --model Qwen/Qwen3-4B --provider generic \
-    --base-url http://localhost:8000/v1 \
+python main.py --model Qwen/Qwen3-4B \
+    --api-key dummy --base-url http://localhost:8000/v1 \
     --max-context-window 40960 --task math \
     --cache cache/qwen3-4b-math.jsonl
 
 # Interrupted? Just re-run the same command — it picks up where it left off
-python main.py --model Qwen/Qwen3-4B --provider generic \
-    --base-url http://localhost:8000/v1 \
+python main.py --model Qwen/Qwen3-4B \
+    --api-key dummy --base-url http://localhost:8000/v1 \
     --max-context-window 40960 --task math \
     --cache cache/qwen3-4b-math.jsonl
 ```
 
 For SLURM users: resubmitting the same job resumes automatically as long as the cache path stays the same.
+
+Cache files are resume state only. Use the completed JSON files in `results/` for analysis and reporting.
 
 ## Output
 
@@ -130,28 +136,44 @@ Results are saved to `results/` as JSON with per-problem detail and aggregate st
 }
 ```
 
+### Interpreting Results
+
+Each task uses its own evaluator:
+
+- Math uses answer extraction by default. For publication-quality math numbers, run the optional LLM judge described below.
+- Coding executes generated code against test cases.
+- Science extracts and checks the final multiple-choice answer.
+
+When comparing runs, keep dataset splits and model settings consistent. For example, do not compare a full-dataset run against a Selected-subset run, and keep thinking-enabled runs separate from non-thinking runs.
+
 ## LLM-based Evaluation
 
 The default evaluators use regex-based answer extraction. For higher accuracy, you can re-evaluate results using an LLM judge with `scripts/llm_eval.py`:
 
 ```bash
-# Re-evaluate a single result file
+# Re-evaluate a single math result file
 python scripts/llm_eval.py results/OckBench_math_gpt-5.2_*.json
 
-# Re-evaluate multiple files with a specific model
-python scripts/llm_eval.py results/*.json --model gpt-4o --concurrency 10
+# Re-evaluate multiple math files with a specific model
+python scripts/llm_eval.py results/OckBench_math_*.json --model gpt-4o --concurrency 10
 
 # Use a custom output directory
-python scripts/llm_eval.py results/*.json --output-dir llm_evaluated/
+python scripts/llm_eval.py results/OckBench_math_*.json --output-dir llm_evaluated/
 
 # Use a local model as judge via OpenAI-compatible endpoint
-python scripts/llm_eval.py results/*.json --model Qwen/Qwen3-4B \
+python scripts/llm_eval.py results/OckBench_math_*.json --model Qwen/Qwen3-4B \
     --base-url http://localhost:8000/v1
+
+# For thinking-capable local judges, disable judge thinking if needed
+python scripts/llm_eval.py results/OckBench_math_*.json \
+    --model Qwen/Qwen3-4B --base-url http://localhost:8000/v1 --disable-thinking
 ```
 
 The script produces two output files per input:
 - `*_llm_eval.json`: detailed LLM judgments with agreement analysis between regex and LLM evaluators
 - `*_llm_rescored.json`: a copy of the original result file with accuracy and OckScore updated using LLM judgments
+
+LLM judging is for math accuracy. Coding should remain code-test evaluated, and science should remain multiple-choice evaluated unless a new task-specific judge is added.
 
 ## Contributing
 

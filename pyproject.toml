@@ -1,0 +1,32 @@
+[project]
+name = "ockbench"
+version = "0.1.0"
+description = "Efficiency-aware LLM benchmarking suite"
+requires-python = ">=3.12"
+dependencies = [
+    "openai",
+    "google-genai",
+    "pydantic",
+    "pyyaml",
+    "httpx",
+    "aiohttp",
+    "tqdm",
+    "coloredlogs",
+    "tiktoken",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
