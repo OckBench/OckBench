@@ -46,6 +46,14 @@ results/
 # Data artifacts
 *.bak
 *.parquet
+peer_results
+
+# Paper drafts
+*.pdf
+
+# Supplementary build artifacts
+supplementary_build/
+supplementary.zip
 
 # API keys and secrets
 .env
@@ -67,4 +75,7 @@ temp/
 # Generated figures
 figures/*.png
 figures/*.pdf
+
+# Tool configs
+.codex
 
