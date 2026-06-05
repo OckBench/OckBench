@@ -5,7 +5,8 @@ from typing import Optional
 
 import httpx
 
-from ..core.schemas import ModelResponse, TokenUsage
+from ..core.schemas import ModelResponse
+from ..utils.usage_normalizer import normalize_anthropic_usage, to_token_usage
 from .base import BaseModelClient
 
 logger = logging.getLogger(__name__)
@@ -137,28 +138,25 @@ class AnthropicClient(BaseModelClient):
                             continue
 
             # Anthropic reports total output_tokens (thinking + answer combined) and
-            # never breaks them out in usage. Get exact answer_tokens by running the
-            # visible answer text through /v1/messages/count_tokens (real Anthropic
-            # tokenizer), then derive reasoning_tokens by subtraction. Works whether
-            # thinking.display is "summarized", "omitted", or full plaintext.
-            answer_tokens = await self._count_tokens_exact(text) if text else 0
-            answer_tokens = min(answer_tokens, output_tokens)
-            reasoning_tokens = output_tokens - answer_tokens
-
-            if cache_creation_tokens or cache_read_tokens:
-                logger.info(
-                    f"cache: creation={cache_creation_tokens} "
-                    f"(5m={cache_ephemeral_5m}, 1h={cache_ephemeral_1h}) "
-                    f"read={cache_read_tokens}"
-                )
-
-            tokens = TokenUsage(
+            # never breaks them out in usage. The normalization seam derives exact
+            # answer_tokens by running the visible answer text through the injected
+            # counter (/v1/messages/count_tokens, real Anthropic tokenizer), then
+            # gets reasoning_tokens by subtraction. Works whether thinking.display
+            # is "summarized", "omitted", or full plaintext. Cache metrics are
+            # carried for logging only and are not surfaced in the token schema.
+            normalized = await normalize_anthropic_usage(
                 prompt_tokens=input_tokens,
-                answer_tokens=answer_tokens,
-                reasoning_tokens=reasoning_tokens,
                 output_tokens=output_tokens,
-                total_tokens=input_tokens + output_tokens,
+                final_text=text,
+                count_tokens=self._count_tokens_exact,
+                cache_metrics={
+                    "cache_creation_tokens": cache_creation_tokens,
+                    "cache_read_tokens": cache_read_tokens,
+                    "cache_ephemeral_5m": cache_ephemeral_5m,
+                    "cache_ephemeral_1h": cache_ephemeral_1h,
+                },
             )
+            tokens = to_token_usage(normalized)
 
             return ModelResponse(
                 text=text,

@@ -6,6 +6,7 @@ from typing import Optional
 from google import genai
 
 from ..core.schemas import ModelResponse, TokenUsage
+from ..utils.usage_normalizer import extract_gemini_usage, to_token_usage
 from .base import BaseModelClient
 
 logger = logging.getLogger(__name__)
@@ -76,46 +77,5 @@ class GeminiClient(BaseModelClient):
         return None
 
     def _extract_tokens(self, response) -> TokenUsage:
-        prompt_tokens = 0
-        answer_tokens = 0
-        total_tokens = 0
-        reasoning_tokens = 0
-
-        if hasattr(response, 'usage_metadata'):
-            metadata = response.usage_metadata
-
-            prompt_tokens = getattr(metadata, 'prompt_token_count', None) or 0
-            answer_tokens = getattr(metadata, 'candidates_token_count', None) or 0
-            total_tokens = getattr(metadata, 'total_token_count', None) or 0
-
-            # Gemini 2.5 thinking tokens
-            thoughts_tokens = getattr(metadata, 'thoughts_token_count', None) or 0
-            if thoughts_tokens:
-                reasoning_tokens = int(thoughts_tokens)
-
-            if not prompt_tokens:
-                prompt_tokens = getattr(metadata, 'prompt_tokens', None) or 0
-            if not answer_tokens:
-                answer_tokens = getattr(metadata, 'completion_tokens', None) or 0
-            if not total_tokens:
-                total_tokens = getattr(metadata, 'total_tokens', None) or 0
-
-            if not prompt_tokens:
-                prompt_tokens = getattr(metadata, 'input_tokens', None) or 0
-            if not answer_tokens:
-                answer_tokens = getattr(metadata, 'output_tokens', None) or 0
-
-        prompt_tokens = int(prompt_tokens) if prompt_tokens else 0
-        answer_tokens = int(answer_tokens) if answer_tokens else 0
-        total_tokens = int(total_tokens) if total_tokens else 0
-
-        if not total_tokens:
-            total_tokens = prompt_tokens + answer_tokens + reasoning_tokens
-
-        output_tokens = reasoning_tokens + answer_tokens
-
-        return TokenUsage(
-            prompt_tokens=prompt_tokens, answer_tokens=answer_tokens,
-            reasoning_tokens=reasoning_tokens, output_tokens=output_tokens,
-            total_tokens=total_tokens,
-        )
+        metadata = getattr(response, 'usage_metadata', None)
+        return to_token_usage(extract_gemini_usage(metadata))

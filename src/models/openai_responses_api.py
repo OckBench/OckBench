@@ -5,7 +5,8 @@ from typing import Optional
 
 import httpx
 
-from ..core.schemas import ModelResponse, TokenUsage
+from ..core.schemas import ModelResponse
+from ..utils.usage_normalizer import extract_responses_usage, to_token_usage
 from .base import BaseModelClient
 
 logger = logging.getLogger(__name__)
@@ -65,10 +66,7 @@ class OpenAIResponsesClient(BaseModelClient):
         try:
             text = ""
             model_name = self.model
-            prompt_tokens = 0
-            output_tokens_total = 0
-            reasoning_tokens = 0
-            total_tokens = 0
+            usage_payload = {}
             status = "completed"
             buffer = ""
             saw_done = False
@@ -108,28 +106,16 @@ class OpenAIResponsesClient(BaseModelClient):
                                 resp_data = d.get("response", {})
                                 model_name = resp_data.get("model", model_name)
                                 status = resp_data.get("status", status)
-                                usage = resp_data.get("usage", {})
-                                prompt_tokens = usage.get("input_tokens", 0)
-                                output_tokens_total = usage.get("output_tokens", 0)
-                                total_tokens = usage.get("total_tokens", 0)
-                                output_details = usage.get("output_tokens_details", {})
-                                if output_details:
-                                    reasoning_tokens = output_details.get("reasoning_tokens", 0) or 0
+                                usage_payload = resp_data.get("usage", {})
 
                         except json.JSONDecodeError:
                             continue
                     if saw_done:
                         break
 
-            answer_tokens = output_tokens_total - reasoning_tokens
-
-            tokens = TokenUsage(
-                prompt_tokens=prompt_tokens,
-                answer_tokens=answer_tokens,
-                reasoning_tokens=reasoning_tokens,
-                output_tokens=output_tokens_total,
-                total_tokens=total_tokens,
-            )
+            normalized = extract_responses_usage(usage_payload)
+            tokens = to_token_usage(normalized)
+            reasoning_tokens = normalized.reasoning_tokens
 
             error = None
             if not saw_done:

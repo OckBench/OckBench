@@ -7,6 +7,7 @@ from openai import AsyncOpenAI
 
 from ..core.schemas import ModelResponse, TokenUsage
 from ..utils.request_overrides import apply_request_overrides
+from ..utils.usage_normalizer import extract_openai_usage, to_token_usage
 from .base import BaseModelClient
 
 logger = logging.getLogger(__name__)
@@ -145,22 +146,4 @@ class OpenAIClient(BaseModelClient):
             raise
 
     def _extract_tokens(self, response) -> TokenUsage:
-        usage = response.usage
-        prompt_tokens = getattr(usage, 'prompt_tokens', 0)
-        completion_tokens = getattr(usage, 'completion_tokens', 0)
-
-        reasoning_tokens = 0
-        if hasattr(usage, 'completion_tokens_details'):
-            details = usage.completion_tokens_details
-            if details and hasattr(details, 'reasoning_tokens'):
-                reasoning_tokens = details.reasoning_tokens or 0
-
-        answer_tokens = completion_tokens - reasoning_tokens
-
-        return TokenUsage(
-            prompt_tokens=prompt_tokens,
-            answer_tokens=answer_tokens,
-            reasoning_tokens=reasoning_tokens,
-            output_tokens=completion_tokens,
-            total_tokens=getattr(usage, 'total_tokens', 0),
-        )
+        return to_token_usage(extract_openai_usage(response.usage))
