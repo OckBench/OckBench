@@ -82,6 +82,8 @@ figures/*.pdf
 # RLCR planning docs (local only)
 docs/unified-api-input_plan.md
 unified-api-input_draft.md
+provider-api_plan.md
+provider-api_idea.md
 
 # Humanize
 .humanize/
