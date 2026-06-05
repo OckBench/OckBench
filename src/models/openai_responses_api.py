@@ -54,6 +54,8 @@ class OpenAIResponsesClient(BaseModelClient):
             "stream": True,
         }
 
+        # Reasoning models take reasoning.effort and reject temperature; others
+        # take temperature. Set via the reasoning_effort config field (YAML).
         reasoning_effort = kwargs.get("reasoning_effort")
         if reasoning_effort:
             request_body["reasoning"] = {"effort": reasoning_effort}

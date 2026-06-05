@@ -66,7 +66,7 @@ class AnthropicClient(BaseModelClient):
         # output_config.effort: soft guidance for total token spend (Mythos, 4.7,
         # 4.6, Sonnet 4.6, Opus 4.5). Values: low / medium / high / xhigh (4.7 only)
         # / max (not 4.5). `high` is the server default; passing it is equivalent
-        # to omitting.
+        # to omitting. Set via the reasoning_effort config field (YAML).
         reasoning_effort = kwargs.get("reasoning_effort")
         if reasoning_effort:
             request_body["output_config"] = {"effort": reasoning_effort}

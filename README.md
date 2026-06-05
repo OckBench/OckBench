@@ -82,6 +82,64 @@ Use a YAML config for reproducibility:
 python main.py --config configs/openai.yaml
 ```
 
+## Customizing the Request
+
+Different providers expect the same logical setting (thinking toggles, reasoning
+effort, the output-token field, which sampling params are allowed) in different
+places in the chat-completions request. Instead of hard-coding per-provider
+rules, OckBench lets you shape the outgoing request yourself with three flags:
+
+- `--request-set PATH=JSON_VALUE` — set a field at a dotted `PATH`. The value is
+  parsed as JSON (so `true`, `0.9`, `null`, `[...]`, `{...}` keep their types),
+  falling back to a plain string. Repeatable.
+- `--request-unset PATH` — remove the field at a dotted `PATH`. Repeatable.
+- `--request-set-json '<json-object>'` — set many fields at once from a JSON
+  object mapping dotted paths to values.
+
+The placeholder `${max_output_tokens}` inside a `--request-set` value is replaced
+at request-build time with the per-problem output-token budget (so it still works
+with `--max-context-window`).
+
+The standard generation flags still work and land in their usual places:
+`--temperature`, `--top-p`, `--max-output-tokens`, `--max-context-window`. Four
+fields are managed by OckBench and protected from override (they back streaming
+and token accounting): `model`, `messages`, `stream`, `stream_options`.
+
+Equivalent YAML (CLI flags take precedence over YAML):
+
+```yaml
+request_overrides:
+  set:
+    extra_body.chat_template_kwargs.enable_thinking: true
+  unset:
+    - temperature
+```
+
+### Migrating from the old `--enable-thinking` / `--reasoning-effort` flags
+
+These two flags (and the automatic `base_url`/model-name detection that placed
+their values) have been removed. Reproduce each former behavior explicitly:
+
+| Former behavior | Override flags |
+|-----------------|----------------|
+| Local vLLM/SGLang Qwen thinking toggle | `--request-set extra_body.chat_template_kwargs.enable_thinking=true` |
+| DeepSeek direct thinking (drops sampling params) | `--request-set extra_body.thinking.type=enabled --request-unset temperature --request-unset top_p` |
+| MiMo thinking (uses `max_completion_tokens`) | `--request-set extra_body.thinking.type=enabled --request-set max_completion_tokens='${max_output_tokens}' --request-unset max_tokens` |
+| OpenRouter reasoning | `--request-set extra_body.reasoning.enabled=true` (or `--request-set extra_body.reasoning.effort=high`) |
+| OpenAI reasoning models (o1/o3/o4/gpt-5): redirect token field, drop sampling params | `--request-set max_completion_tokens='${max_output_tokens}' --request-unset max_tokens --request-unset temperature --request-unset top_p --request-set reasoning_effort=high` |
+
+> Add `--request-unset top_p` (shown above) only when you also pass `--top-p`; the `temperature`/`top_p` drops reproduce providers that ignore sampling params in thinking/reasoning mode. Omit any `--request-unset` for a field you never set.
+
+The request-override mechanism above applies to the `chat_completion` provider.
+For the `openai-responses` and `anthropic` providers, reasoning effort is still
+set with the `reasoning_effort` config field in YAML (there is no CLI flag), e.g.:
+
+```yaml
+provider: anthropic
+model: claude-...
+reasoning_effort: high   # -> Anthropic output_config.effort / Responses reasoning.effort
+```
+
 ## Resuming Interrupted Runs
 
 Pass `--cache <path>` to save results incrementally. If a run is interrupted, re-running the same command skips already-completed problems automatically.

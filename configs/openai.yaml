@@ -11,7 +11,15 @@ model: gpt-5.2
 # api_key: pass via CLI: --api-key $OPENAI_API_KEY
 base_url: https://api.openai.com/v1
 max_output_tokens: 128000
-reasoning_effort: medium
+# Reasoning model (gpt-5.x): redirect the token budget, set reasoning effort,
+# and drop temperature — reproduces the former built-in reasoning-model handling.
+request_overrides:
+  set:
+    max_completion_tokens: ${max_output_tokens}
+    reasoning_effort: medium
+  unset:
+    - max_tokens
+    - temperature
 concurrency: 10
 timeout: 600
 max_retries: 3

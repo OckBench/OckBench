@@ -138,9 +138,9 @@ class BenchmarkRunner:
                     prompt=formatted_prompt,
                     temperature=self.config.temperature,
                     max_output_tokens=max_output_tokens,
-                    reasoning_effort=self.config.reasoning_effort,
                     top_p=self.config.top_p,
-                    enable_thinking=self.config.enable_thinking
+                    reasoning_effort=self.config.reasoning_effort,
+                    request_overrides=self.config.request_overrides,
                 )
 
                 if response.error:

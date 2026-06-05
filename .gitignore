@@ -79,3 +79,9 @@ figures/*.pdf
 # Tool configs
 .codex
 
+# RLCR planning docs (local only)
+docs/unified-api-input_plan.md
+unified-api-input_draft.md
+
+# Humanize
+.humanize/

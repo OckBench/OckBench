@@ -12,7 +12,10 @@ api_key: dummy
 base_url: http://localhost:8000/v1
 temperature: 0.0
 max_context_window: 40960
-enable_thinking: true
+# Local vLLM/SGLang thinking toggle for Qwen3 via chat_template_kwargs.
+request_overrides:
+  set:
+    extra_body.chat_template_kwargs.enable_thinking: true
 concurrency: 200
 timeout: 3000
 max_retries: 2

@@ -1,8 +1,9 @@
 """Command-line argument parser for OckBench."""
 import argparse
+import json
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List, Tuple
 
 # Task presets with default values
 TASK_PRESETS = {
@@ -131,23 +132,36 @@ Examples:
              "(mutually exclusive with --max-output-tokens)",
     )
     parser.add_argument(
-        "--reasoning-effort",
-        type=str,
-        default=None,
-        help="Reasoning effort level (for o1/o3 models)",
-    )
-    parser.add_argument(
         "--top-p",
         type=float,
         default=None,
         help="Nucleus sampling parameter",
     )
+
+    # Request overrides: freely shape the outgoing chat-completions request.
     parser.add_argument(
-        "--enable-thinking",
-        type=lambda x: x.lower() in ('true', '1', 'yes'),
+        "--request-set",
+        action="append",
         default=None,
-        metavar="true|false",
-        help="Enable/disable thinking mode for supported models (Qwen3, DeepSeek)",
+        metavar="PATH=JSON_VALUE",
+        help="Set a field at a dotted PATH to a JSON-typed value (repeatable). "
+             "The value is parsed as JSON, falling back to a plain string. "
+             "Use the ${max_output_tokens} placeholder for the per-problem budget.",
+    )
+    parser.add_argument(
+        "--request-unset",
+        action="append",
+        default=None,
+        metavar="PATH",
+        help="Remove the field at a dotted PATH from the request (repeatable).",
+    )
+    parser.add_argument(
+        "--request-set-json",
+        action="append",
+        default=None,
+        metavar="JSON_OBJECT",
+        help="Set multiple overrides at once from a JSON object mapping dotted "
+             "paths to values (repeatable).",
     )
 
     # Runtime configuration
@@ -243,6 +257,63 @@ def parse_args(args=None) -> argparse.Namespace:
     return parser.parse_args(args)
 
 
+def _parse_cli_request_overrides(
+    set_items, unset_items, set_json_items
+) -> Tuple[Dict[str, Any], List[str]]:
+    """Parse the request-override CLI flags into a (set, unset) pair.
+
+    Raises ValueError on a missing '=', a non-object --request-set-json,
+    invalid JSON, or a duplicate set path (no silent last-write-wins).
+    """
+    set_map: Dict[str, Any] = {}
+
+    def _record(path: str, value: Any) -> None:
+        if path in set_map:
+            raise ValueError(
+                f"duplicate request override path '{path}' on the command line; "
+                "each path may be set at most once"
+            )
+        set_map[path] = value
+
+    for item in set_items or []:
+        if "=" not in item:
+            raise ValueError(
+                f"invalid --request-set '{item}': expected PATH=JSON_VALUE (missing '=')"
+            )
+        path, raw_value = item.split("=", 1)
+        path = path.strip()
+        if not path:
+            raise ValueError(f"invalid --request-set '{item}': empty path")
+        try:
+            value: Any = json.loads(raw_value)
+        except json.JSONDecodeError:
+            value = raw_value
+        _record(path, value)
+
+    for item in set_json_items or []:
+        try:
+            parsed = json.loads(item)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid --request-set-json '{item}': not valid JSON ({exc})")
+        if not isinstance(parsed, dict):
+            raise ValueError(
+                f"invalid --request-set-json '{item}': expected a JSON object "
+                "mapping dotted paths to values"
+            )
+        for path, value in parsed.items():
+            _record(path, value)
+
+    unset_list: List[str] = []
+    for item in unset_items or []:
+        path = item.strip()
+        if not path:
+            raise ValueError("invalid --request-unset: empty path")
+        if path not in unset_list:
+            unset_list.append(path)
+
+    return set_map, unset_list
+
+
 def build_config(args: argparse.Namespace) -> Dict[str, Any]:
     """Build config dict. Priority: CLI args > config file > task preset."""
     config = {}
@@ -273,9 +344,7 @@ def build_config(args: argparse.Namespace) -> Dict[str, Any]:
         "temperature": args.temperature,
         "max_output_tokens": args.max_output_tokens,
         "max_context_window": args.max_context_window,
-        "reasoning_effort": args.reasoning_effort,
         "top_p": args.top_p,
-        "enable_thinking": args.enable_thinking,
         "concurrency": args.concurrency,
         "timeout": args.timeout,
         "max_retries": args.max_retries,
@@ -303,5 +372,46 @@ def build_config(args: argparse.Namespace) -> Dict[str, Any]:
         config.pop("max_context_window", None)
     elif args.max_context_window is not None:
         config.pop("max_output_tokens", None)
+
+    # Assemble request overrides exactly once: YAML/preset base, CLI on top
+    # (CLI wins). Validation and the protected-field guard run here so clients
+    # consume the already-merged result without re-parsing.
+    yaml_overrides = config.get("request_overrides") or {}
+    yaml_set = dict(yaml_overrides.get("set") or {})
+    yaml_unset = list(yaml_overrides.get("unset") or [])
+
+    cli_set, cli_unset = _parse_cli_request_overrides(
+        args.request_set, args.request_unset, args.request_set_json
+    )
+
+    cli_unset_set = set(cli_unset)
+    merged_set = {**yaml_set, **cli_set}
+    combined_unset = yaml_unset + [path for path in cli_unset if path not in yaml_unset]
+    # CLI precedence: a CLI `--request-set PATH=...` overrides a YAML unset of the
+    # same path, unless the CLI also explicitly unsets it.
+    merged_unset = [
+        path for path in combined_unset
+        if not (path in cli_set and path not in cli_unset_set)
+    ]
+
+    # Standard CLI generation flags take precedence over YAML request overrides
+    # that target the same top-level field. If the user passes --temperature or
+    # --top-p, drop a YAML set/unset of that path so the CLI flag wins (unless
+    # they also gave an explicit --request-* for it on the CLI). --max-output-tokens
+    # is intentionally excluded: it controls the budget value, not its placement,
+    # which an override may redirect via ${max_output_tokens}.
+    cli_override_paths = set(cli_set.keys()) | cli_unset_set
+    flag_claimed_paths = set()
+    if args.temperature is not None:
+        flag_claimed_paths.add("temperature")
+    if args.top_p is not None:
+        flag_claimed_paths.add("top_p")
+    for path in flag_claimed_paths - cli_override_paths:
+        merged_set.pop(path, None)
+        merged_unset = [entry for entry in merged_unset if entry != path]
+
+    # Empty-path rejection and the protected-field guard run once during
+    # BenchmarkConfig validation, so they cover every config-construction path.
+    config["request_overrides"] = {"set": merged_set, "unset": merged_unset}
 
     return config

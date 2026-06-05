@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 
 import yaml
 
+from ..utils.request_overrides import redact_config
 from .schemas import BenchmarkConfig
 
 
@@ -49,9 +50,7 @@ def save_config(config: BenchmarkConfig, output_path: str):
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    config_dict = config.model_dump()
-    if config_dict.get('api_key'):
-        config_dict['api_key'] = '***MASKED***'
+    config_dict = redact_config(config.model_dump())
 
     with open(output_path, 'w', encoding='utf-8') as f:
         yaml.dump(config_dict, f, default_flow_style=False, sort_keys=False)

@@ -6,6 +6,7 @@ import httpx
 from openai import AsyncOpenAI
 
 from ..core.schemas import ModelResponse, TokenUsage
+from ..utils.request_overrides import apply_request_overrides
 from .base import BaseModelClient
 
 logger = logging.getLogger(__name__)
@@ -50,69 +51,25 @@ class OpenAIClient(BaseModelClient):
     ) -> ModelResponse:
         messages = [{"role": "user", "content": prompt}]
 
+        # Uniform base request. Provider/model-specific shaping is no longer
+        # hard-coded here; users control it through request overrides.
         request_params = {
             "model": self.model,
             "messages": messages,
-            "temperature": temperature,
         }
-
-        if self._is_reasoning_model():
-            request_params["max_completion_tokens"] = max_output_tokens
-            if kwargs.get("reasoning_effort"):
-                request_params["reasoning_effort"] = kwargs["reasoning_effort"]
-            request_params.pop("temperature", None)
-            for param in ["top_p", "top_k", "repeat_penalty", "frequency_penalty", "presence_penalty"]:
-                kwargs.pop(param, None)
-        else:
-            request_params["max_tokens"] = max_output_tokens
-            if kwargs.get("top_p") is not None:
-                request_params["top_p"] = kwargs["top_p"]
-            if kwargs.get("top_k") is not None:
-                request_params["top_k"] = kwargs["top_k"]
-            if kwargs.get("frequency_penalty") is not None:
-                request_params["frequency_penalty"] = kwargs["frequency_penalty"]
-            if kwargs.get("presence_penalty") is not None:
-                request_params["presence_penalty"] = kwargs["presence_penalty"]
-
-        base_url_lower = (self.base_url or "").lower()
-        is_deepseek_direct = "deepseek.com" in base_url_lower
-        is_mimo_direct = "xiaomimimo.com" in base_url_lower
-        is_openrouter = "openrouter" in base_url_lower
-
-        if is_mimo_direct:
-            request_params["max_completion_tokens"] = request_params.pop("max_tokens", max_output_tokens)
-            if kwargs.get("enable_thinking") is not None:
-                thinking_type = "enabled" if kwargs["enable_thinking"] else "disabled"
-                request_params["extra_body"] = {"thinking": {"type": thinking_type}}
-        elif is_deepseek_direct:
-            # DeepSeek native API: {"thinking": {"type": "enabled"|"disabled"}}.
-            # Thinking is enabled by default; strip params the docs say are ignored
-            # in thinking mode (temperature, top_p, presence_penalty, frequency_penalty).
-            explicit_thinking = kwargs.get("enable_thinking")
-            thinking_on = explicit_thinking is not False
-            if explicit_thinking is not None:
-                thinking_type = "enabled" if explicit_thinking else "disabled"
-                request_params["extra_body"] = {"thinking": {"type": thinking_type}}
-            if kwargs.get("reasoning_effort"):
-                eb = request_params.setdefault("extra_body", {})
-                eb["reasoning_effort"] = kwargs["reasoning_effort"]
-            if thinking_on:
-                for p in ("temperature", "top_p", "presence_penalty", "frequency_penalty"):
-                    request_params.pop(p, None)
-        elif is_openrouter:
-            if kwargs.get("enable_thinking"):
-                request_params["extra_body"] = {"reasoning": {"enabled": True}}
-            elif kwargs.get("reasoning_effort") and not self._is_reasoning_model():
-                request_params["extra_body"] = {"reasoning": {"effort": kwargs["reasoning_effort"]}}
-        elif kwargs.get("enable_thinking") is not None:
-            # vLLM/SGLang local: chat_template_kwargs
-            thinking_key = "thinking" if "deepseek" in self.model.lower() else "enable_thinking"
-            request_params["extra_body"] = {
-                "chat_template_kwargs": {thinking_key: kwargs["enable_thinking"]}
-            }
-
+        if temperature is not None:
+            request_params["temperature"] = temperature
+        request_params["max_tokens"] = max_output_tokens
+        if kwargs.get("top_p") is not None:
+            request_params["top_p"] = kwargs["top_p"]
         request_params["stream"] = True
         request_params["stream_options"] = {"include_usage": True}
+
+        request_params = apply_request_overrides(
+            request_params,
+            kwargs.get("request_overrides"),
+            {"max_output_tokens": max_output_tokens},
+        )
 
         try:
             text = ""
@@ -207,7 +164,3 @@ class OpenAIClient(BaseModelClient):
             output_tokens=completion_tokens,
             total_tokens=getattr(usage, 'total_tokens', 0),
         )
-
-    def _is_reasoning_model(self) -> bool:
-        model_lower = self.model.lower()
-        return any(prefix in model_lower for prefix in ['o1', 'o3', 'o4', 'gpt-5'])
