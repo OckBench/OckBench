@@ -33,6 +33,10 @@ def compute_run_identity(config: BenchmarkConfig) -> Dict[str, Any]:
         judge_identity = {
             "model": config.judge.model,
             "base_url": redact_url(config.judge.base_url),
+            # Judge generation settings change verdicts (e.g. max_tokens truncation,
+            # timeout-driven failures), so they are part of the run identity.
+            "max_tokens": config.judge.max_tokens,
+            "timeout": config.judge.timeout,
             "request_overrides": {
                 # Mask secret-keyed override values — this identity is written to
                 # the cache header on disk; non-secret structure is kept (it
@@ -53,6 +57,10 @@ def compute_run_identity(config: BenchmarkConfig) -> Dict[str, Any]:
             "path": config.dataset_path,
         },
         "evaluator_type": config.evaluator_type,
+        # Evaluator scoring settings that can change a problem's verdict (e.g. the
+        # code subprocess timeout: a timeout-sensitive solution may score
+        # differently at 5s vs 30s), so a change refuses resume into an old cache.
+        "evaluator_settings": {"execution_timeout": config.execution_timeout},
         "prompt_template": template_identity(config.evaluator_type),
         "request_overrides": {
             # Mask secret-keyed override values before they reach the on-disk

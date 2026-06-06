@@ -181,17 +181,21 @@ class BenchmarkRunner:
         logger.info("Initializing evaluator...")
         self.evaluator = get_evaluator(self.config.evaluator_type, self.config)
 
-        if self.cache_path:
-            self.cache = RunCache.open(self.cache_path, self.config)
-            completed_ids = self.cache.completed_ids
-            if completed_ids:
-                self.problems = [p for p in self.problems if p.id not in completed_ids]
-                logger.info(f"Resuming: {len(completed_ids)} cached, {len(self.problems)} remaining")
-
+        # Construct the client BEFORE opening the cache. Construction validates
+        # the provider name and the per-provider protected-path guard, so an
+        # invalid config fails fast without first writing an identity header that
+        # would otherwise occupy the cache path and block the corrected rerun.
         logger.info("Initializing API client...")
         self.client = self._create_client()
 
         try:
+            if self.cache_path:
+                self.cache = RunCache.open(self.cache_path, self.config)
+                completed_ids = self.cache.completed_ids
+                if completed_ids:
+                    self.problems = [p for p in self.problems if p.id not in completed_ids]
+                    logger.info(f"Resuming: {len(completed_ids)} cached, {len(self.problems)} remaining")
+
             if self.problems:
                 logger.info("Running benchmark...")
                 new_results = asyncio.run(self._run_benchmark_async())

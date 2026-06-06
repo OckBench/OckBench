@@ -101,6 +101,48 @@ def test_changed_identity_refused_naming_change():
         assert "generation" in str(exc.value)
 
 
+def test_invalid_config_does_not_poison_cache():
+    # A construction error (protected override) with --cache must fail fast WITHOUT
+    # writing an identity header, so the corrected rerun isn't blocked as a mismatch.
+    with tempfile.TemporaryDirectory() as tmp:
+        cache_path = str(Path(tmp) / "c.jsonl")
+        bad = BenchmarkConfig(
+            dataset_path=_dataset(tmp), provider="chat_completion", model="m",
+            base_url="https://x/v1", api_key="k", max_output_tokens=100,
+            evaluator_type="science",
+            request_overrides={"set": {}, "unset": ["stream"]},  # protected -> rejected at client build
+        )
+        with pytest.raises(ValueError):
+            BenchmarkRunner(bad, cache_path=cache_path).run()
+        assert not Path(cache_path).exists()  # cache not poisoned
+
+
+def test_execution_timeout_change_refused():
+    # Code scoring is timeout-sensitive; execution_timeout is part of identity.
+    with tempfile.TemporaryDirectory() as tmp:
+        cache_path = str(Path(tmp) / "c.jsonl")
+        ds = _dataset(tmp)
+        base = dict(dataset_path=ds, provider="gemini", model="m",
+                    max_output_tokens=100, evaluator_type="code")
+        RunCache.open(cache_path, BenchmarkConfig(**base, execution_timeout=5))
+        with pytest.raises(CacheIdentityMismatch) as exc:
+            RunCache.open(cache_path, BenchmarkConfig(**base, execution_timeout=30))
+        assert "evaluator_settings" in str(exc.value)
+
+
+def test_judge_max_tokens_change_refused():
+    # Judge generation settings change verdicts, so they are part of identity.
+    with tempfile.TemporaryDirectory() as tmp:
+        cache_path = str(Path(tmp) / "c.jsonl")
+        ds = _dataset(tmp)
+        RunCache.open(cache_path, _config("gemini", ds,
+                      judge=JudgeConfig(model="j", base_url="https://j/v1", api_key="k", max_tokens=500)))
+        with pytest.raises(CacheIdentityMismatch) as exc:
+            RunCache.open(cache_path, _config("gemini", ds,
+                          judge=JudgeConfig(model="j", base_url="https://j/v1", api_key="k", max_tokens=1000)))
+        assert "judge" in str(exc.value)
+
+
 def test_different_endpoint_refused():
     # Same provider/model/dataset but a different endpoint is a different run.
     with tempfile.TemporaryDirectory() as tmp:
