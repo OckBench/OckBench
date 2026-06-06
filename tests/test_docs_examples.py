@@ -80,6 +80,26 @@ def test_documented_yaml_config_command_validates_via_inspect(monkeypatch):
     assert inspection["api_key"] == "***MASKED***"
 
 
+def test_cli_help_epilog_examples_validate(monkeypatch):
+    # The --help epilog is user-facing documentation: every example must be a
+    # valid current command that resolves through the inspect path with no
+    # socket, and each math example must build the required judge.
+    from src.utils.parser import HELP_EXAMPLES
+
+    def _boom(*a, **k):
+        raise AssertionError("a help example opened a socket")
+    monkeypatch.setattr(socket, "socket", _boom)
+    # Resolve the judge key for the example that relies on env (configs/openai.yaml).
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-doc-env")
+
+    assert HELP_EXAMPLES  # non-empty
+    for description, argv in HELP_EXAMPLES:
+        cfg = BenchmarkConfig(**build_config(parse_args(argv)))
+        build_inspection(cfg)  # validates the resolved request, no network
+        if cfg.evaluator_type == "math":
+            get_evaluator("math", cfg)  # the required judge must be configured
+
+
 def test_documented_custom_provider_pattern():
     # Mirrors the README "registering a custom provider" example.
     name = "doc-echo-provider"

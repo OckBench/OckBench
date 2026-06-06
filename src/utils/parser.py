@@ -26,29 +26,50 @@ TASK_PRESETS = {
     },
 }
 
+# Help-epilog examples as (description, argv) pairs. This is the single source of
+# truth: the --help text is rendered from it, and a docs regression test
+# validates each argv through the real config/inspect path. Every example must be
+# a valid current command (math examples include the required judge). Shell-style
+# placeholders like $OPENAI_API_KEY are non-empty strings that validate offline.
+HELP_EXAMPLES: List[Tuple[str, List[str]]] = [
+    ("OpenAI math (the LLM judge is required; its key resolves from JUDGE_API_KEY / OPENAI_API_KEY)",
+     ["--model", "gpt-5.2", "--api-key", "$OPENAI_API_KEY", "--base-url", "$OPENAI_BASE_URL",
+      "--task", "math", "--max-output-tokens", "128000",
+      "--judge-model", "gpt-4o-mini", "--judge-base-url", "$OPENAI_BASE_URL"]),
+    ("OpenAI coding (deterministic scorer — no judge needed)",
+     ["--model", "gpt-5.2", "--api-key", "$OPENAI_API_KEY", "--base-url", "$OPENAI_BASE_URL",
+      "--task", "coding", "--max-output-tokens", "128000"]),
+    ("Gemini science (key from GEMINI_API_KEY or --api-key)",
+     ["--model", "gemini-3.1-pro-preview", "--provider", "gemini", "--api-key", "$GEMINI_API_KEY",
+      "--task", "science", "--max-output-tokens", "65536"]),
+    ("Local vLLM/SGLang math (same local server as judge)",
+     ["--model", "Qwen/Qwen3-4B", "--api-key", "dummy", "--base-url", "http://localhost:8000/v1",
+      "--task", "math", "--max-context-window", "40960",
+      "--judge-model", "Qwen/Qwen3-4B", "--judge-base-url", "http://localhost:8000/v1",
+      "--judge-api-key", "dummy"]),
+    ("Third-party relay, science (OpenAI-compatible proxy)",
+     ["--model", "openai/gpt-4o-mini", "--base-url", "https://openrouter.ai/api/v1",
+      "--api-key", "$OPENROUTER_API_KEY", "--task", "science", "--max-output-tokens", "32000"]),
+    ("Bundled YAML config — inspect the resolved request (no network)",
+     ["--config", "configs/openai.yaml", "--api-key", "$OPENAI_API_KEY", "--inspect"]),
+]
+
+
+def _format_help_examples() -> str:
+    lines = ["", "Examples:"]
+    for description, argv in HELP_EXAMPLES:
+        lines.append(f"  # {description}")
+        lines.append("  python main.py " + " ".join(argv))
+        lines.append("")
+    return "\n".join(lines)
+
 
 def create_parser() -> argparse.ArgumentParser:
     """Create and return the argument parser."""
     parser = argparse.ArgumentParser(
         description="OckBench - LLM Benchmarking Tool for Reasoning Tasks",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Run with OpenAI GPT-4o on math tasks
-  python main.py --model gpt-4o --task math
-
-  # Run with Gemini on coding tasks
-  python main.py --model gemini-2.5-pro --provider gemini --task coding
-
-  # Run with local model via vLLM
-  python main.py --model qwen3-4b --base-url http://localhost:8000/v1
-
-  # Run with OpenRouter
-  python main.py --model openai/gpt-4o-mini --base-url https://openrouter.ai/api/v1 --api-key $KEY
-
-  # Load from config file with overrides
-  python main.py --config config.yaml --model gpt-4o-mini
-        """,
+        epilog=_format_help_examples(),
     )
 
     # Provider: resolved through the provider registry. The four built-ins are
