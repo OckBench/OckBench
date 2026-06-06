@@ -53,8 +53,13 @@ Run on OpenAI:
 export OPENAI_API_KEY="sk-..."
 export OPENAI_BASE_URL="https://api.openai.com/v1"
 
+# Math is scored by an LLM judge (required) — pass the judge model + endpoint.
+# Its key resolves from JUDGE_API_KEY or OPENAI_API_KEY (exported above).
 python main.py --model gpt-5.2 --api-key $OPENAI_API_KEY --base-url $OPENAI_BASE_URL \
-    --task math --max-output-tokens 128000
+    --task math --max-output-tokens 128000 \
+    --judge-model gpt-4o-mini --judge-base-url $OPENAI_BASE_URL
+
+# Coding and science use deterministic scorers (no judge needed).
 python main.py --model gpt-5.2 --api-key $OPENAI_API_KEY --base-url $OPENAI_BASE_URL \
     --task coding --max-output-tokens 128000
 python main.py --model gpt-5.2 --api-key $OPENAI_API_KEY --base-url $OPENAI_BASE_URL \
@@ -67,19 +72,26 @@ Run on a local model via [vLLM](https://docs.vllm.ai/en/latest/usage/) (install 
 # Start your model server first
 vllm serve Qwen/Qwen3-4B --port 8000
 
-# Then run the benchmark
+# Then run the benchmark (math uses the judge; here the same local server judges,
+# with judge thinking disabled — see configs/local.yaml for the YAML form).
 python main.py \
     --model Qwen/Qwen3-4B \
     --api-key dummy \
     --base-url http://localhost:8000/v1 \
     --max-context-window 40960 \
-    --task math
+    --task math \
+    --judge-model Qwen/Qwen3-4B --judge-base-url http://localhost:8000/v1 --judge-api-key dummy
+
+# Coding/science need no judge:
+python main.py --model Qwen/Qwen3-4B --api-key dummy --base-url http://localhost:8000/v1 \
+    --max-context-window 40960 --task science
 ```
 
-Use a YAML config for reproducibility:
+Use a YAML config for reproducibility (the bundled configs include the judge for
+math; `chat_completion` configs still need the model key via `--api-key`):
 
 ```bash
-python main.py --config configs/openai.yaml
+python main.py --config configs/openai.yaml --api-key $OPENAI_API_KEY
 ```
 
 ## Customizing the Request
@@ -187,17 +199,11 @@ field — have been removed; reasoning/thinking is now expressed through
 Pass `--cache <path>` to save results incrementally. If a run is interrupted, re-running the same command skips already-completed problems automatically.
 
 ```bash
-# Start a run
-python main.py --model Qwen/Qwen3-4B \
-    --api-key dummy --base-url http://localhost:8000/v1 \
-    --max-context-window 40960 --task math \
-    --cache cache/qwen3-4b-math.jsonl
+# Start a run (configs/local.yaml already supplies the math judge)
+python main.py --config configs/local.yaml --cache cache/qwen3-4b-math.jsonl
 
 # Interrupted? Just re-run the same command — it picks up where it left off
-python main.py --model Qwen/Qwen3-4B \
-    --api-key dummy --base-url http://localhost:8000/v1 \
-    --max-context-window 40960 --task math \
-    --cache cache/qwen3-4b-math.jsonl
+python main.py --config configs/local.yaml --cache cache/qwen3-4b-math.jsonl
 ```
 
 For SLURM users: resubmitting the same job resumes automatically as long as the cache path stays the same.

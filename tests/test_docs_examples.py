@@ -12,6 +12,7 @@ from src.core.inspect import build_inspection, format_inspection
 from src.core.schemas import BenchmarkConfig, ModelResponse, TokenUsage
 from src.evaluators import EvalResult, Evaluator, get_evaluator
 from src.models.base import BaseModelClient
+from src.utils.parser import build_config, parse_args
 
 CONFIGS_DIR = Path(__file__).resolve().parent.parent / "configs"
 CONFIG_FILES = sorted(CONFIGS_DIR.glob("*.yaml"))
@@ -44,6 +45,39 @@ def test_no_removed_flags_in_configs(config_file):
     data = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
     for removed in REMOVED_TOP_LEVEL_FIELDS:
         assert removed not in data, f"{config_file.name} references removed field '{removed}'"
+
+
+def test_documented_openai_math_command_builds_judge_offline(monkeypatch):
+    # The README "Run on OpenAI" math command must build the (required) math judge
+    # without a network call. Its judge key resolves from the exported OPENAI_API_KEY.
+    def _boom(*a, **k):
+        raise AssertionError("documented math command opened a socket")
+    monkeypatch.setattr(socket, "socket", _boom)
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-doc")
+    argv = [
+        "--model", "gpt-5.2", "--api-key", "sk-doc", "--base-url", "https://api.openai.com/v1",
+        "--task", "math", "--max-output-tokens", "128000",
+        "--judge-model", "gpt-4o-mini", "--judge-base-url", "https://api.openai.com/v1",
+    ]
+    cfg = BenchmarkConfig(**build_config(parse_args(argv)))
+    ev = get_evaluator("math", cfg)  # must not raise (judge fully configured), no network
+    assert ev is not None
+
+
+def test_documented_yaml_config_command_validates_via_inspect(monkeypatch):
+    # README: `python main.py --config configs/openai.yaml --api-key $OPENAI_API_KEY`
+    # must resolve and validate through the inspect path with no socket.
+    def _boom(*a, **k):
+        raise AssertionError("documented YAML config command opened a socket")
+    monkeypatch.setattr(socket, "socket", _boom)
+
+    cfg = BenchmarkConfig(**build_config(parse_args(
+        ["--config", str(CONFIGS_DIR / "openai.yaml"), "--api-key", "sk-doc"]
+    )))
+    inspection = build_inspection(cfg)
+    assert inspection["provider"] == "chat_completion"
+    assert inspection["api_key"] == "***MASKED***"
 
 
 def test_documented_custom_provider_pattern():
