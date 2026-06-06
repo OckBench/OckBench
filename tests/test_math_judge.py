@@ -66,10 +66,22 @@ def test_math_without_judge_fails_fast():
         get_evaluator("math", _math_config(judge=None))
     msg = str(exc.value).lower()
     assert "judge" in msg
-    assert "model" in msg or "endpoint" in msg or "url" in msg
+    # Names all three missing judge fields.
+    assert "model" in msg and "base_url" in msg and "api-key" in msg
 
 
-def test_math_with_judge_config_builds_llm_judge():
+@pytest.mark.parametrize("judge, missing_term", [
+    (JudgeConfig(model="", base_url="https://x/v1", api_key="k"), "judge model"),
+    (JudgeConfig(model="m", base_url=None, api_key="k"), "judge endpoint/base_url"),
+    (JudgeConfig(model="m", base_url="https://x/v1", api_key=None), "judge api-key"),
+])
+def test_math_partial_judge_config_fails_fast(judge, missing_term):
+    with pytest.raises(ValueError) as exc:
+        get_evaluator("math", _math_config(judge=judge))
+    assert missing_term in str(exc.value)
+
+
+def test_math_with_full_judge_config_builds_llm_judge():
     cfg = _math_config(judge=JudgeConfig(model="gpt-4o-mini", base_url="https://x/v1", api_key="k"))
     ev = get_evaluator("math", cfg)
     assert isinstance(ev, MathEvaluator)

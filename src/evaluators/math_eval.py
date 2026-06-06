@@ -38,13 +38,30 @@ class MathEvaluator(Evaluator):
         )
 
 
+def _missing_judge_fields(judge_cfg) -> list:
+    """User-facing names of the judge fields that are unset/empty (after env+CLI
+    resolution). All three are required to score math."""
+    if judge_cfg is None:
+        return ["judge model", "judge endpoint/base_url", "judge api-key"]
+    missing = []
+    if not judge_cfg.model:
+        missing.append("judge model")
+    if not judge_cfg.base_url:
+        missing.append("judge endpoint/base_url")
+    if not judge_cfg.api_key:
+        missing.append("judge api-key")
+    return missing
+
+
 @register_evaluator("math")
 def _build_math_evaluator(config) -> MathEvaluator:
-    judge_cfg = config.judge
-    if judge_cfg is None or not judge_cfg.model:
+    missing = _missing_judge_fields(config.judge)
+    if missing:
         raise ValueError(
-            "math scoring requires a configured LLM judge: set the judge endpoint/url, "
-            "model, and api-key (config.judge / --judge-model / --judge-base-url / --judge-api-key). "
+            "math scoring requires a fully configured LLM judge; missing: "
+            + ", ".join(missing)
+            + " (set via config.judge / --judge-model / --judge-base-url / --judge-api-key; "
+            "the api-key also resolves from JUDGE_API_KEY or OPENAI_API_KEY). "
             "There is no regex-only scoring fallback for math."
         )
-    return MathEvaluator(build_judge(judge_cfg))
+    return MathEvaluator(build_judge(config.judge))

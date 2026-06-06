@@ -185,12 +185,17 @@ class BenchmarkRunner:
         logger.info("Initializing API client...")
         self.client = self._create_client()
 
-        if self.problems:
-            logger.info("Running benchmark...")
-            new_results = asyncio.run(self._run_benchmark_async())
-        else:
-            logger.info("All problems already cached, no work to do")
-            new_results = []
+        try:
+            if self.problems:
+                logger.info("Running benchmark...")
+                new_results = asyncio.run(self._run_benchmark_async())
+            else:
+                logger.info("All problems already cached, no work to do")
+                new_results = []
+        finally:
+            # Release client-owned resources (e.g. the Gemini executor).
+            if self.client is not None:
+                self.client.close()
 
         duration = time.time() - start_time
 

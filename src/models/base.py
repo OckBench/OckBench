@@ -79,6 +79,10 @@ class BaseModelClient(ABC):
         transport/HTTP failure so ``generate`` can classify and retry it.
         """
 
+    def close(self) -> None:
+        """Release any client-owned resources. No-op by default; overridden by
+        clients that own an executor or connection pool."""
+
     # ----- shared request-shaping + retry -------------------------------- #
     def shape_request(self, prompt: str, max_output_tokens: int) -> Dict[str, Any]:
         """Build the base request then apply the user's request overrides.

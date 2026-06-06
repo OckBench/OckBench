@@ -102,6 +102,23 @@ def test_raw_http_400_surfaces_immediately_for_responses_and_anthropic():
         assert resp.error is not None and "400" in resp.error
 
 
+def test_gemini_uses_dedicated_executor_not_default():
+    # Regression: the Gemini client must NOT use the asyncio default executor
+    # (run_in_executor(None)), whose asyncio.run shutdown can hang.
+    import inspect as _i
+    from concurrent.futures import ThreadPoolExecutor
+
+    from src.models.gemini_api import GeminiClient
+    client = create_provider("gemini", model="g", api_key="k")
+    try:
+        assert isinstance(client._executor, ThreadPoolExecutor)
+        src = _i.getsource(GeminiClient._generate_content_async)
+        assert "run_in_executor(None" not in src
+        assert "self._executor" in src
+    finally:
+        client.close()
+
+
 def test_base_is_single_retry_owner():
     # No provider client defines its own generate(); they all inherit the base.
     import src.models.base as bm

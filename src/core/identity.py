@@ -12,6 +12,7 @@ import hashlib
 import json
 from typing import Any, Dict
 
+from ..utils.prompt_formatter import template_identity
 from ..utils.request_overrides import redact_url
 from .schemas import SCHEMA_VERSION, BenchmarkConfig
 
@@ -49,6 +50,7 @@ def compute_run_identity(config: BenchmarkConfig) -> Dict[str, Any]:
             "path": config.dataset_path,
         },
         "evaluator_type": config.evaluator_type,
+        "prompt_template": template_identity(config.evaluator_type),
         "request_overrides": {
             "set": dict(overrides.set),
             "unset": list(overrides.unset),

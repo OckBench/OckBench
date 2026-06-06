@@ -1,6 +1,8 @@
 """Google Gemini API client."""
 import asyncio
 import logging
+import os
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Optional
 
 from google import genai
@@ -42,6 +44,20 @@ class GeminiClient(BaseModelClient):
         else:
             self.client = genai.Client(http_options=http_options)
 
+        # The genai SDK call is blocking, so it runs in a thread. We use a
+        # DEDICATED executor (never the asyncio default): per-call event loops
+        # create and tear down via asyncio.run, and the default-executor
+        # shutdown path can hang in restricted environments. Owning the executor
+        # keeps that shutdown a no-op and makes the lifecycle deterministic.
+        self._executor = ThreadPoolExecutor(
+            max_workers=min(32, (os.cpu_count() or 1) + 4),
+            thread_name_prefix="ockbench-gemini",
+        )
+
+    def close(self) -> None:
+        """Shut down the dedicated executor (best-effort, non-blocking)."""
+        self._executor.shutdown(wait=False)
+
     def build_request(self, prompt: str, max_output_tokens: int) -> Dict[str, Any]:
         config: Dict[str, Any] = {"temperature": self.temperature, "max_output_tokens": max_output_tokens}
         if self.top_p is not None:
@@ -69,8 +85,9 @@ class GeminiClient(BaseModelClient):
 
     async def _generate_content_async(self, model: str, contents: Any, config: dict):
         loop = asyncio.get_event_loop()
+        # Dedicated executor (self._executor), never the default (None) — see __init__.
         return await loop.run_in_executor(
-            None,
+            self._executor,
             lambda: self.client.models.generate_content(model=model, contents=contents, config=config),
         )
 

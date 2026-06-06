@@ -60,7 +60,7 @@ def _dataset(tmp):
 def _config(provider, dataset_path, **extra):
     base = dict(dataset_path=dataset_path, provider=provider, model="m",
                 max_output_tokens=100, evaluator_type="math",
-                judge=JudgeConfig(model="judge-m"))
+                judge=JudgeConfig(model="judge-m", base_url="https://judge/v1", api_key="jk"))
     base.update(extra)
     return BenchmarkConfig(**base)
 
@@ -101,6 +101,20 @@ def test_different_endpoint_refused():
             RunCache.open(cache_path, _config("chat_completion", ds,
                                               base_url="https://relay.example.com/v1", api_key="k"))
         assert "base_url" in str(exc.value)
+
+
+def test_prompt_template_change_refused(monkeypatch):
+    # The prompt/template is part of run identity (AC-8 tuple); a template change
+    # must refuse resume, naming prompt_template.
+    import src.utils.prompt_formatter as pf
+    with tempfile.TemporaryDirectory() as tmp:
+        cache_path = str(Path(tmp) / "c.jsonl")
+        ds = _dataset(tmp)
+        RunCache.open(cache_path, _config("gemini", ds))
+        monkeypatch.setattr(pf, "PROMPT_FORMATTER_VERSION", "999")
+        with pytest.raises(CacheIdentityMismatch) as exc:
+            RunCache.open(cache_path, _config("gemini", ds))
+        assert "prompt_template" in str(exc.value)
 
 
 def test_cache_header_has_no_credentials():
