@@ -69,13 +69,21 @@ for task in "${TASKS[@]}"; do
 
         echo ""
         echo "--- $model | task=$task | max_tokens=$max_tokens ---"
+
+        # Math requires an LLM judge; reuse the same endpoint/key.
+        judge_args=()
+        if [[ "$task" == "math" ]]; then
+            judge_args=(--judge-model "$model" --judge-base-url "$BASE_URL" --judge-api-key "$ANTHROPIC_API_KEY")
+        fi
+
         python main.py --provider chat_completion --model "$model" \
             --base-url "$BASE_URL" \
             --api-key "$ANTHROPIC_API_KEY" \
             --task "$task" --max-output-tokens "$max_tokens" \
             --output-dir "results/full_pool/${task}" \
             --concurrency "$CONCURRENCY" --timeout "$TIMEOUT" \
-            --cache "$cache_file"
+            --cache "$cache_file" \
+            ${judge_args[@]+"${judge_args[@]}"}
     done
 done
 

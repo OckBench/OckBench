@@ -17,6 +17,8 @@ cd "$PROJECT_DIR"
 # --- Config ---
 CONCURRENCY=20
 TIMEOUT=600
+OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://api.openai.com/v1}"
+JUDGE_MODEL="${JUDGE_MODEL:-gpt-4o-mini}"
 
 # Model -> max output tokens
 #   gpt-4.1:      32K output,  1M context
@@ -97,12 +99,25 @@ for model in "${MODELS[@]}"; do
             echo " $model | effort=$effort | task=$task"
             echo "========================================="
 
+            # Reasoning effort is now expressed via request_overrides (the old
+            # --reasoning-effort flag was removed). Math is scored by a required
+            # LLM judge (its key resolves from OPENAI_API_KEY).
+            extra_args=()
+            if [[ "$effort" != "none" ]]; then
+                extra_args+=(--request-set "reasoning_effort=$effort")
+            fi
+            if [[ "$task" == "math" ]]; then
+                extra_args+=(--judge-model "$JUDGE_MODEL" --judge-base-url "$OPENAI_BASE_URL" \
+                             --judge-api-key "$OPENAI_API_KEY")
+            fi
+
             python main.py --provider chat_completion --model "$model" \
+                --api-key "$OPENAI_API_KEY" --base-url "$OPENAI_BASE_URL" \
                 --task "$task" --max-output-tokens "$max_tokens" \
                 --output-dir "results/full_pool/${task}" \
-                --reasoning-effort "$effort" \
                 --concurrency "$CONCURRENCY" --timeout "$TIMEOUT" \
-                --cache "$cache_file"
+                --cache "$cache_file" \
+                ${extra_args[@]+"${extra_args[@]}"}
         done
     done
 done

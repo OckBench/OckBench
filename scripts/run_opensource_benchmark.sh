@@ -134,7 +134,8 @@ for model in "${MODELS[@]}"; do
     echo " Model: $model (TP=$tp, CTX=$ctx_window)"
     echo "========================================="
 
-    # 1. Launch SGLang server
+    # 1. Launch SGLang server (ensure the log dir exists before redirecting to it)
+    mkdir -p logs
     echo "Starting SGLang server..."
     python -m sglang.launch_server \
         --model-path "$model" \
@@ -143,8 +144,6 @@ for model in "${MODELS[@]}"; do
         ${SGLANG_EXTRA:-} \
         > "logs/sglang_${short}.log" 2>&1 &
     SERVER_PID=$!
-
-    mkdir -p logs
 
     # Wait for server
     if ! wait_for_server "$BASE_URL"; then
@@ -160,6 +159,14 @@ for model in "${MODELS[@]}"; do
 
         cache_file="cache/${task}_${short}.jsonl"
 
+        # Math is scored by a required LLM judge; use the same local server as the
+        # judge. (To disable judge thinking, point --config at a YAML with
+        # judge.request_overrides instead — see configs/local.yaml.)
+        judge_args=()
+        if [[ "$task" == "math" ]]; then
+            judge_args=(--judge-model "$model" --judge-base-url "$BASE_URL" --judge-api-key dummy)
+        fi
+
         python main.py --provider chat_completion --model "$model" \
             --base-url "$BASE_URL" \
             --api-key dummy \
@@ -171,6 +178,7 @@ for model in "${MODELS[@]}"; do
             --timeout "$TIMEOUT" \
             --max-retries "$MAX_RETRIES" \
             --cache "$cache_file" \
+            ${judge_args[@]+"${judge_args[@]}"} \
             2>&1 | tee -a "logs/bench_${short}_${task}.log"
     done
 
