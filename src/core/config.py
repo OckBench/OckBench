@@ -20,14 +20,22 @@ def load_config(config_path: Optional[str] = None, **overrides) -> BenchmarkConf
         with open(config_path, 'r', encoding='utf-8') as f:
             config_dict = yaml.safe_load(f) or {}
 
-    config_dict = _apply_env_vars(config_dict)
     config_dict.update({k: v for k, v in overrides.items() if v is not None})
+    # Resolve env keys AFTER the YAML+override merge so the final provider/judge
+    # (which may come from overrides) is what env resolution sees.
+    config_dict = apply_env_keys(config_dict)
 
     return BenchmarkConfig(**config_dict)
 
 
-def _apply_env_vars(config_dict: Dict[str, Any]) -> Dict[str, Any]:
-    """Apply environment variables for API keys (non-chat_completion providers only)."""
+def apply_env_keys(config_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """Resolve API keys from the environment for the already-merged config.
+
+    Fills the provider ``api_key`` (non-chat_completion providers) and the math
+    judge's ``api_key`` only when not already set, so explicit CLI/YAML values
+    always win. Must run on the FINAL merged config — provider/judge may arrive
+    via overrides, not the YAML base.
+    """
     if not config_dict.get('api_key'):
         provider = config_dict.get('provider', '').lower()
 

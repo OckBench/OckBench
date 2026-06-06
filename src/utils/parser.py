@@ -468,4 +468,11 @@ def build_config(args: argparse.Namespace) -> Dict[str, Any]:
     # BenchmarkConfig validation, so they cover every config-construction path.
     config["request_overrides"] = {"set": merged_set, "unset": merged_unset}
 
+    # Resolve API keys from the environment on the FINAL merged config (provider
+    # and judge are now assembled), via the same helper load_config uses — so the
+    # CLI path honors the documented JUDGE_API_KEY / OPENAI_API_KEY / provider env
+    # fallbacks. Explicit CLI/YAML keys still win (helper only fills when unset).
+    from ..core.config import apply_env_keys
+    config = apply_env_keys(config)
+
     return config
