@@ -192,15 +192,26 @@ def redact_url(url: Any) -> Any:
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 
+def redact_override_set(set_map: Any) -> Any:
+    """Return a copy of an override ``set`` map with secret-keyed values masked.
+
+    Masks the whole value when the leaf path key is secret-like, otherwise
+    recurses to mask any nested secret-keyed entries — keeping non-secret
+    structure intact. Shared by saved provenance, inspect output, and the cache
+    identity header so credentials never reach disk through any of them.
+    """
+    if not isinstance(set_map, dict):
+        return set_map
+    return {
+        path: (MASK if _is_secret_key(path.split(".")[-1]) else _redact_value(value))
+        for path, value in set_map.items()
+    }
+
+
 def _redact_overrides_set(overrides: Any) -> None:
     """In place: mask secret-keyed entries inside an ``{set, unset}`` mapping."""
-    if isinstance(overrides, dict):
-        set_map = overrides.get("set")
-        if isinstance(set_map, dict):
-            overrides["set"] = {
-                path: (MASK if _is_secret_key(path.split(".")[-1]) else _redact_value(value))
-                for path, value in set_map.items()
-            }
+    if isinstance(overrides, dict) and isinstance(overrides.get("set"), dict):
+        overrides["set"] = redact_override_set(overrides["set"])
 
 
 def redact_config(config_dict: Dict[str, Any]) -> Dict[str, Any]:

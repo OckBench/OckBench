@@ -39,6 +39,18 @@ def test_math_scores_via_judge_over_extracted_block():
     assert result.extraction_method == "answer_block"
 
 
+def test_judge_outage_sets_eval_result_error():
+    # A judge that exhausts retries returns a verdict with `error`; the evaluator
+    # must surface it as EvalResult.error (not a silent correct=False).
+    class _OutageJudge:
+        async def score(self, *, question, ground_truth, candidate):
+            return JudgeVerdict(correct=False, extracted_answer=None, reasoning="", error="timeout after retries")
+
+    result = asyncio.run(MathEvaluator(_OutageJudge()).evaluate(_problem("6"), "<answer>6</answer>"))
+    assert result.error == "timeout after retries"
+    assert result.is_correct is False
+
+
 def test_math_judge_verdict_is_authoritative():
     # Even when the block text equals ground truth, the judge's verdict decides.
     judge = FakeJudge(correct=False)

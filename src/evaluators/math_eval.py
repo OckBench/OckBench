@@ -35,6 +35,9 @@ class MathEvaluator(Evaluator):
                               if verdict.extracted_answer is not None else extracted),
             extraction_method=method,
             judge_reasoning=verdict.reasoning or verdict.error,
+            # A judge outage (exhausted retries) is an infrastructure failure, not
+            # a wrong answer — surface it so the cache re-attempts on resume.
+            error=verdict.error,
         )
 
 

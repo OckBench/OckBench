@@ -105,12 +105,18 @@ class BenchmarkRunner:
                     )
                 else:
                     eval_result = await self.evaluator.evaluate(problem, response.text)
+                    if eval_result.error:
+                        # The model responded but the scorer (e.g. the LLM judge)
+                        # failed — record it as an error so the cache re-attempts
+                        # on resume, while preserving the real model tokens.
+                        logger.error(f"Evaluator error for problem {problem.id}: {eval_result.error}")
                     result = EvaluationResult(
                         **problem_fields,
                         model_response=response.text, extracted_answer=eval_result.extracted_answer,
                         correct=eval_result.is_correct, tokens=response.tokens, latency=response.latency,
                         extraction_method=eval_result.extraction_method,
                         judge_reasoning=eval_result.judge_reasoning,
+                        error=eval_result.error,
                         tests_passed=eval_result.tests_passed, tests_total=eval_result.tests_total,
                         execution_error=eval_result.execution_error,
                         finish_reason=response.finish_reason,

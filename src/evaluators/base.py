@@ -21,6 +21,11 @@ class EvalResult:
     extracted_answer: Optional[Any]
     extraction_method: str
     judge_reasoning: Optional[str] = None
+    # Scoring-infrastructure failure (e.g. an LLM-judge outage), distinct from a
+    # legitimate wrong answer. When set, the runner records it as
+    # EvaluationResult.error so the cache re-attempts the problem on resume rather
+    # than freezing a spurious incorrect verdict.
+    error: Optional[str] = None
     tests_passed: Optional[int] = None
     tests_total: Optional[int] = None
     execution_error: Optional[str] = None

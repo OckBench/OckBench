@@ -13,7 +13,7 @@ import json
 from typing import Any, Dict
 
 from ..utils.prompt_formatter import template_identity
-from ..utils.request_overrides import redact_url
+from ..utils.request_overrides import redact_override_set, redact_url
 from .schemas import SCHEMA_VERSION, BenchmarkConfig
 
 
@@ -34,7 +34,10 @@ def compute_run_identity(config: BenchmarkConfig) -> Dict[str, Any]:
             "model": config.judge.model,
             "base_url": redact_url(config.judge.base_url),
             "request_overrides": {
-                "set": dict(config.judge.request_overrides.set),
+                # Mask secret-keyed override values — this identity is written to
+                # the cache header on disk; non-secret structure is kept (it
+                # affects the request shape and thus the run identity).
+                "set": redact_override_set(config.judge.request_overrides.set),
                 "unset": list(config.judge.request_overrides.unset),
             },
         }
@@ -52,7 +55,9 @@ def compute_run_identity(config: BenchmarkConfig) -> Dict[str, Any]:
         "evaluator_type": config.evaluator_type,
         "prompt_template": template_identity(config.evaluator_type),
         "request_overrides": {
-            "set": dict(overrides.set),
+            # Mask secret-keyed override values before they reach the on-disk
+            # cache header; keep non-secret structure (it shapes the request).
+            "set": redact_override_set(overrides.set),
             "unset": list(overrides.unset),
         },
         "generation": {

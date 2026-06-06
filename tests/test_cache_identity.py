@@ -27,6 +27,17 @@ class _CountingJudge:
                             extracted_answer=str(candidate), reasoning="")
 
 
+class _ErroringJudge:
+    """Simulates a judge outage: always returns a verdict with an error."""
+
+    def __init__(self):
+        self.calls = 0
+
+    async def score(self, *, question, ground_truth, candidate):
+        self.calls += 1
+        return JudgeVerdict(correct=False, extracted_answer=None, reasoning="", error="judge timeout")
+
+
 def _register_fixed_provider(name="fake-fixed"):
     @registry.register_provider(name)
     class _FixedClient(BaseModelClient):
@@ -126,6 +137,54 @@ def test_cache_header_has_no_credentials():
                                           base_url="https://user:s3cret@relay.example.com/v1", api_key="k"))
         raw = Path(cache_path).read_text()
         assert "s3cret" not in raw
+
+
+def test_cache_header_redacts_override_secrets():
+    # Secrets injected through request_overrides must not be written to the cache
+    # identity header; non-secret override structure is retained.
+    with tempfile.TemporaryDirectory() as tmp:
+        cache_path = str(Path(tmp) / "c.jsonl")
+        cfg = BenchmarkConfig(
+            dataset_path=_dataset(tmp), provider="gemini", model="m",
+            max_output_tokens=100, evaluator_type="science",
+            request_overrides={"set": {
+                "headers.x-api-key": "OVERRIDE-SECRET",
+                "extra_headers.Authorization": "Bearer BEARER-SECRET",
+                "extra_body.reasoning.effort": "high",
+            }, "unset": []},
+        )
+        RunCache.open(cache_path, cfg)
+        raw = Path(cache_path).read_text()
+        assert "OVERRIDE-SECRET" not in raw
+        assert "BEARER-SECRET" not in raw
+        assert "***MASKED***" in raw
+        assert "reasoning" in raw  # non-secret override structure preserved
+
+
+def test_judge_outage_recorded_as_error_and_retried(monkeypatch):
+    # A judge outage must be recorded as an error (not a silent wrong answer) so
+    # the cache does NOT mark the problem completed and a resume re-attempts it.
+    provider = _register_fixed_provider("fake-fixed-outage")
+    judge = _ErroringJudge()
+    monkeypatch.setattr(math_eval, "build_judge", lambda cfg: judge)
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            ds = _dataset(tmp)
+            cache_path = str(Path(tmp) / "c.jsonl")
+            exp = BenchmarkRunner(_config(provider, ds), cache_path=cache_path).run()
+
+            assert exp.summary.error_count == 2          # both judge-outages -> errors
+            assert exp.summary.correct_count == 0
+            assert all(r.error for r in exp.results)      # not silent correct=False
+            assert exp.results[0].model_response == "<answer>6</answer>"  # model tokens/text preserved
+            calls_first = judge.calls
+            assert calls_first == 2
+
+            # Resume: the outaged problems were not completed -> they are re-judged.
+            BenchmarkRunner(_config(provider, ds), cache_path=cache_path).run()
+            assert judge.calls > calls_first
+    finally:
+        registry._PROVIDER_REGISTRY.pop(provider, None)
 
 
 # --------------------------------------------------------------------------- #
