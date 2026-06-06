@@ -26,6 +26,18 @@ from ..utils.request_overrides import apply_request_overrides, guard_protected_p
 logger = logging.getLogger(__name__)
 
 
+def raise_status_error(status_code: int, body: str) -> None:
+    """Raise a transport error carrying ``status_code`` for retry classification.
+
+    The raw-httpx clients (anthropic, openai-responses) catch an
+    ``HTTPStatusError`` and re-raise through here so ``_is_non_retryable_error``
+    can read ``status_code`` off the exception. Always raises.
+    """
+    error = Exception(f"Error code: {status_code} - {body}")
+    error.status_code = status_code
+    raise error
+
+
 class BaseModelClient(ABC):
     """Abstract base class for provider clients with the single retry owner."""
 

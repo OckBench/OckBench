@@ -7,7 +7,7 @@ import httpx
 
 from ..core.schemas import ModelResponse
 from ..utils.usage_normalizer import normalize_anthropic_usage, to_token_usage
-from .base import BaseModelClient
+from .base import BaseModelClient, raise_status_error
 from .registry import register_provider
 
 logger = logging.getLogger(__name__)
@@ -158,9 +158,7 @@ class AnthropicClient(BaseModelClient):
             error_body = e.response.text if hasattr(e.response, 'text') else str(e)
             logger.error(f"Anthropic API HTTP error: {e.response.status_code} - {error_body}")
             # Carry status_code so the base layer can classify non-retryable errors.
-            wrapped = Exception(f"Error code: {e.response.status_code} - {error_body}")
-            wrapped.status_code = e.response.status_code
-            raise wrapped
+            raise_status_error(e.response.status_code, error_body)
         except Exception as e:
             logger.error(f"Anthropic API error: {e}")
             raise
