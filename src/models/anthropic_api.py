@@ -1,32 +1,36 @@
 """Anthropic Messages API client with streaming and adaptive thinking."""
 import json
 import logging
-from typing import Optional
+from typing import Any, Dict
 
 import httpx
 
 from ..core.schemas import ModelResponse
 from ..utils.usage_normalizer import normalize_anthropic_usage, to_token_usage
 from .base import BaseModelClient
+from .registry import register_provider
 
 logger = logging.getLogger(__name__)
 
 
+@register_provider("anthropic")
 class AnthropicClient(BaseModelClient):
-    """Client for Anthropic /v1/messages with adaptive thinking and streaming."""
+    """Client for Anthropic /v1/messages with adaptive thinking and streaming.
 
-    def __init__(
-        self,
-        model: str,
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
-        timeout: int = 120,
-        max_retries: int = 3,
-        **kwargs
-    ):
-        super().__init__(model, api_key, base_url, timeout, max_retries, **kwargs)
+    The default ``thinking`` block (``display="summarized"``) keeps the stream
+    from going silent for minutes, but it is an ordinary, overridable request
+    field — not hard-coded reasoning placement. Users reshape reasoning the same
+    way as on every other provider (e.g. set ``output_config.effort`` or change
+    ``thinking``).
+    """
 
-        self.endpoint = (base_url or "https://api.anthropic.com").rstrip("/")
+    protected_paths = ("model", "messages", "stream")
+    provider_name = "anthropic"
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        self.endpoint = (self.base_url or "https://api.anthropic.com").rstrip("/")
         if self.endpoint.endswith("/v1"):
             self.messages_url = self.endpoint + "/messages"
             self.count_tokens_url = self.endpoint + "/messages/count_tokens"
@@ -36,27 +40,21 @@ class AnthropicClient(BaseModelClient):
 
         self.headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key or 'dummy-key'}",
-            "x-api-key": api_key or "dummy-key",
+            "Authorization": f"Bearer {self.api_key or 'dummy-key'}",
+            "x-api-key": self.api_key or "dummy-key",
             "anthropic-version": "2023-06-01",
         }
 
+        # httpx does not auto-retry; BaseModelClient.generate is the sole retry owner.
         self._http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(timeout, connect=30.0, read=timeout),
+            timeout=httpx.Timeout(self.timeout, connect=30.0, read=self.timeout),
         )
 
-    async def _call_api(
-        self,
-        prompt: str,
-        temperature: float = 0.0,
-        max_output_tokens: int = 4096,
-        **kwargs
-    ) -> ModelResponse:
-        # display="summarized" forces thinking_delta events during reasoning so the
-        # stream doesn't go silent for minutes (Claude 4.7 defaults to "omitted",
-        # which emits only signature_delta at the end). Summarized thinking text is
-        # not used for token accounting (see _count_tokens_exact), only as heartbeat.
-        request_body = {
+    def build_request(self, prompt: str, max_output_tokens: int) -> Dict[str, Any]:
+        # display="summarized" forces thinking_delta events during reasoning so
+        # the stream doesn't go silent. Summarized thinking text is not used for
+        # token accounting (see _count_tokens_exact), only as a heartbeat.
+        return {
             "model": self.model,
             "max_tokens": max_output_tokens,
             "messages": [{"role": "user", "content": prompt}],
@@ -64,19 +62,11 @@ class AnthropicClient(BaseModelClient):
             "stream": True,
         }
 
-        # output_config.effort: soft guidance for total token spend (Mythos, 4.7,
-        # 4.6, Sonnet 4.6, Opus 4.5). Values: low / medium / high / xhigh (4.7 only)
-        # / max (not 4.5). `high` is the server default; passing it is equivalent
-        # to omitting. Set via the reasoning_effort config field (YAML).
-        reasoning_effort = kwargs.get("reasoning_effort")
-        if reasoning_effort:
-            request_body["output_config"] = {"effort": reasoning_effort}
-
+    async def _dispatch(self, request: Dict[str, Any]) -> ModelResponse:
         try:
             text = ""
             input_tokens = 0
             output_tokens = 0
-            # Cache token fields (informational; not surfaced in TokenUsage schema)
             cache_creation_tokens = 0
             cache_read_tokens = 0
             cache_ephemeral_5m = 0
@@ -86,14 +76,12 @@ class AnthropicClient(BaseModelClient):
             buffer = ""
 
             async with self._http_client.stream(
-                "POST", self.messages_url, headers=self.headers, json=request_body
+                "POST", self.messages_url, headers=self.headers, json=request
             ) as resp:
                 if resp.status_code != 200:
                     await resp.aread()
                     raise httpx.HTTPStatusError(
-                        f"HTTP {resp.status_code}",
-                        request=resp.request,
-                        response=resp,
+                        f"HTTP {resp.status_code}", request=resp.request, response=resp,
                     )
 
                 async for chunk in resp.aiter_text():
@@ -130,20 +118,23 @@ class AnthropicClient(BaseModelClient):
                                 # usage in message_delta is cumulative; replace, don't add.
                                 usage = d.get("usage", {})
                                 output_tokens = usage.get("output_tokens", output_tokens)
-                                cache_creation_tokens = usage.get("cache_creation_input_tokens", cache_creation_tokens) or cache_creation_tokens
-                                cache_read_tokens = usage.get("cache_read_input_tokens", cache_read_tokens) or cache_read_tokens
+                                cache_creation_tokens = (
+                                    usage.get("cache_creation_input_tokens", cache_creation_tokens)
+                                    or cache_creation_tokens
+                                )
+                                cache_read_tokens = (
+                                    usage.get("cache_read_input_tokens", cache_read_tokens)
+                                    or cache_read_tokens
+                                )
                                 stop_reason = d.get("delta", {}).get("stop_reason", stop_reason)
 
                         except json.JSONDecodeError:
                             continue
 
-            # Anthropic reports total output_tokens (thinking + answer combined) and
-            # never breaks them out in usage. The normalization seam derives exact
-            # answer_tokens by running the visible answer text through the injected
-            # counter (/v1/messages/count_tokens, real Anthropic tokenizer), then
-            # gets reasoning_tokens by subtraction. Works whether thinking.display
-            # is "summarized", "omitted", or full plaintext. Cache metrics are
-            # carried for logging only and are not surfaced in the token schema.
+            # Anthropic reports a combined output_tokens (thinking + answer). The
+            # normalization seam derives exact answer_tokens by running the
+            # visible answer text through the injected counter, then gets
+            # reasoning_tokens by subtraction. Cache metrics are logged only.
             normalized = await normalize_anthropic_usage(
                 prompt_tokens=input_tokens,
                 output_tokens=output_tokens,
@@ -159,28 +150,28 @@ class AnthropicClient(BaseModelClient):
             tokens = to_token_usage(normalized)
 
             return ModelResponse(
-                text=text,
-                tokens=tokens,
-                latency=0,
-                model=model_name,
+                text=text, tokens=tokens, latency=0, model=model_name,
                 finish_reason=stop_reason,
             )
 
         except httpx.HTTPStatusError as e:
             error_body = e.response.text if hasattr(e.response, 'text') else str(e)
             logger.error(f"Anthropic API HTTP error: {e.response.status_code} - {error_body}")
-            raise Exception(f"Error code: {e.response.status_code} - {error_body}")
+            # Carry status_code so the base layer can classify non-retryable errors.
+            wrapped = Exception(f"Error code: {e.response.status_code} - {error_body}")
+            wrapped.status_code = e.response.status_code
+            raise wrapped
         except Exception as e:
             logger.error(f"Anthropic API error: {e}")
             raise
 
     async def _count_tokens_exact(self, text: str) -> int:
-        """Return Anthropic's exact token count for `text` via /v1/messages/count_tokens.
+        """Return Anthropic's exact token count for ``text`` via count_tokens.
 
         Includes a few tokens of user-message wrapping overhead (~4-6), which is
-        noise (<1%) for substantive answers and self-corrects via min(answer, output)
-        clamping for very short answers. Falls back to a tiktoken-based estimate
-        if the endpoint is unavailable.
+        noise (<1%) for substantive answers and self-corrects via min(answer,
+        output) clamping for very short answers. Falls back to a tiktoken-based
+        estimate if the endpoint is unavailable.
         """
         if not text:
             return 0
@@ -188,17 +179,12 @@ class AnthropicClient(BaseModelClient):
             resp = await self._http_client.post(
                 self.count_tokens_url,
                 headers=self.headers,
-                json={
-                    "model": self.model,
-                    "messages": [{"role": "user", "content": text}],
-                },
+                json={"model": self.model, "messages": [{"role": "user", "content": text}]},
                 timeout=30.0,
             )
             resp.raise_for_status()
             return int(resp.json().get("input_tokens", 0))
         except Exception as e:
-            logger.warning(
-                f"count_tokens failed, falling back to tiktoken estimate: {e}"
-            )
+            logger.warning(f"count_tokens failed, falling back to tiktoken estimate: {e}")
             from ..utils.token_counter import estimate_tokens
             return estimate_tokens(text, self.model)

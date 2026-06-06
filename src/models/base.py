@@ -1,100 +1,146 @@
-"""Base class for model API clients."""
+"""Common base interface for all provider clients.
+
+Every provider builds the same way: ``build_request`` assembles the full
+provider-specific request dict, the shared ``shape_request`` applies the user's
+``request_overrides`` (with ``${max_output_tokens}`` substitution), and
+``_dispatch`` sends the shaped request and parses the response. ``generate``
+here is the single owner of retry/backoff and non-retryable classification — no
+provider implements its own retry loop, and every provider client disables its
+underlying SDK's auto-retry so attempts never stack.
+
+Connection parameters (``timeout``, ``max_retries``, ``base_url``, ``api_key``)
+are constructor arguments; generation parameters that stay constant across a run
+(``temperature``, ``top_p``, ``request_overrides``) are held on the client; only
+the per-problem ``max_output_tokens`` is passed to ``generate``.
+"""
 import asyncio
 import logging
 import random
 import time
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Any, Dict, Optional, Tuple
 
-from ..core.schemas import ModelResponse, TokenUsage
+from ..core.schemas import ModelResponse, RequestOverrides, TokenUsage
+from ..utils.request_overrides import apply_request_overrides, guard_protected_paths, override_paths
 
 logger = logging.getLogger(__name__)
 
 
 class BaseModelClient(ABC):
-    """Abstract base class for model API clients with retry logic."""
+    """Abstract base class for provider clients with the single retry owner."""
+
+    #: Request fields this provider depends on for streaming / token accounting.
+    #: A user override targeting any of these (or a path beneath them) is rejected.
+    protected_paths: Tuple[str, ...] = ()
+    #: Registered provider name; used in protected-path error messages.
+    provider_name: str = "base"
 
     def __init__(
         self,
+        *,
         model: str,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         timeout: int = 120,
         max_retries: int = 3,
-        **kwargs
+        temperature: float = 0.0,
+        top_p: Optional[float] = None,
+        request_overrides: Optional[RequestOverrides] = None,
+        **kwargs,
     ):
         self.model = model
         self.api_key = api_key
         self.base_url = base_url
         self.timeout = timeout
         self.max_retries = max_retries
+        self.temperature = temperature
+        self.top_p = top_p
+        self.request_overrides = request_overrides if request_overrides is not None else RequestOverrides()
         self.extra_params = kwargs
 
-    @abstractmethod
-    async def _call_api(
-        self,
-        prompt: str,
-        temperature: float = 0.0,
-        max_output_tokens: int = 4096,
-        **kwargs
-    ) -> ModelResponse:
-        pass
+        # Enforce this provider's protected paths once, at construction, before
+        # any network — the error names the offending field and the provider.
+        guard_protected_paths(
+            override_paths(self.request_overrides),
+            self.protected_paths,
+            provider=self.provider_name,
+        )
 
-    async def generate(
-        self,
-        prompt: str,
-        temperature: float = 0.0,
-        max_output_tokens: int = 4096,
-        **kwargs
-    ) -> ModelResponse:
-        """Generate response with retry logic."""
-        last_error = None
+    # ----- provider-specific surface ------------------------------------- #
+    @abstractmethod
+    def build_request(self, prompt: str, max_output_tokens: int) -> Dict[str, Any]:
+        """Assemble the full provider-specific request dict (pre-override)."""
+
+    @abstractmethod
+    async def _dispatch(self, request: Dict[str, Any]) -> ModelResponse:
+        """Send the shaped request and parse it into a ``ModelResponse``.
+
+        Must not implement retry; ``generate`` owns that. Must raise on a
+        transport/HTTP failure so ``generate`` can classify and retry it.
+        """
+
+    # ----- shared request-shaping + retry -------------------------------- #
+    def shape_request(self, prompt: str, max_output_tokens: int) -> Dict[str, Any]:
+        """Build the base request then apply the user's request overrides.
+
+        Pure (no network): also used by the inspect/dry-run surface.
+        """
+        request = self.build_request(prompt, max_output_tokens)
+        return apply_request_overrides(
+            request,
+            self.request_overrides,
+            {"max_output_tokens": max_output_tokens},
+        )
+
+    async def generate(self, prompt: str, max_output_tokens: int) -> ModelResponse:
+        """Generate a response, owning the only retry/backoff loop."""
+        request = self.shape_request(prompt, max_output_tokens)
+        last_error: Optional[Exception] = None
+        start_time = time.time()
 
         for attempt in range(self.max_retries):
             try:
                 start_time = time.time()
-                response = await self._call_api(
-                    prompt=prompt,
-                    temperature=temperature,
-                    max_output_tokens=max_output_tokens,
-                    **kwargs
-                )
+                response = await self._dispatch(request)
                 response.latency = time.time() - start_time
                 return response
-
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - classified below
                 last_error = e
                 error_msg = str(e)
 
                 if self._is_non_retryable_error(e):
-                    logger.error(f"Non-retryable error: {error_msg}")
+                    logger.error(f"[{self.provider_name}] non-retryable error: {error_msg}")
                     return self._create_error_response(error_msg, time.time() - start_time)
 
                 if attempt < self.max_retries - 1:
                     wait_time = self._retry_wait_time(error_msg, attempt)
                     logger.warning(
-                        f"API call failed (attempt {attempt + 1}/{self.max_retries}): {error_msg}. "
+                        f"[{self.provider_name}] API call failed "
+                        f"(attempt {attempt + 1}/{self.max_retries}): {error_msg}. "
                         f"Retrying in {wait_time}s..."
                     )
                     await asyncio.sleep(wait_time)
                 else:
-                    logger.error(f"API call failed after {self.max_retries} attempts: {error_msg}")
+                    logger.error(
+                        f"[{self.provider_name}] API call failed after "
+                        f"{self.max_retries} attempts: {error_msg}"
+                    )
 
         return self._create_error_response(str(last_error), 0)
 
     def _is_non_retryable_error(self, error: Exception) -> bool:
-        """Check if error should not be retried."""
-        status = getattr(error, 'status_code', None)
+        """Classify errors that must surface immediately without retry."""
+        status = getattr(error, "status_code", None)
         if status in (400, 401, 403, 404, 422):
             return True
 
         non_retryable_keywords = [
-            'invalid api key',
-            'authentication failed',
-            'invalid model',
-            'context length exceeded',
-            'content policy violation',
-            'invalid request',
+            "invalid api key",
+            "authentication failed",
+            "invalid model",
+            "context length exceeded",
+            "content policy violation",
+            "invalid request",
         ]
         error_lower = str(error).lower()
         return any(keyword in error_lower for keyword in non_retryable_keywords)
@@ -103,14 +149,8 @@ class BaseModelClient(ABC):
         """Back off longer for provider throttling and broken streaming bodies."""
         error_lower = error_msg.lower()
         retry_pressure_keywords = [
-            "429",
-            "rate limit",
-            "too many requests",
-            "peer closed",
-            "incomplete message body",
-            "remoteprotocolerror",
-            "readtimeout",
-            "timeout",
+            "429", "rate limit", "too many requests", "peer closed",
+            "incomplete message body", "remoteprotocolerror", "readtimeout", "timeout",
         ]
         if any(keyword in error_lower for keyword in retry_pressure_keywords):
             base_wait = min(10 * (2 ** attempt), 120)

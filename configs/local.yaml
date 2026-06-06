@@ -1,4 +1,4 @@
-# OckBench - Local Model (vLLM)
+# OckBench - Local Model (vLLM / SGLang, OpenAI-compatible server)
 # Switch task by changing dataset_path and evaluator_type:
 #   math:    data/OckBench_math.jsonl    + evaluator_type: math
 #   coding:  data/OckBench_coding.jsonl  + evaluator_type: code
@@ -20,3 +20,12 @@ concurrency: 200
 timeout: 3000
 max_retries: 2
 evaluator_type: math
+# Use the same local server as the math judge; disable its thinking so the
+# verdict JSON comes back directly.
+judge:
+  model: Qwen/Qwen3-4B
+  base_url: http://localhost:8000/v1
+  api_key: dummy
+  request_overrides:
+    set:
+      extra_body.chat_template_kwargs.enable_thinking: false

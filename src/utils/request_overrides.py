@@ -15,10 +15,7 @@ application (see ``guard_protected_paths``).
 """
 import copy
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
-
-# Fields the chat-completions client depends on for streaming and token
-# accounting. A protected path blocks itself and anything nested beneath it.
-CHAT_COMPLETION_PROTECTED_PATHS = ("model", "messages", "stream", "stream_options")
+from urllib.parse import urlsplit, urlunsplit
 
 # Leaf keys whose values are masked when persisting overrides to saved output.
 SECRET_KEY_PATTERNS = ("key", "token", "secret", "authorization", "password")
@@ -35,6 +32,13 @@ def _override_part(overrides: Any, attr: str, default):
     else:
         value = getattr(overrides, attr, default)
     return default if value is None else value
+
+
+def override_paths(overrides: Any) -> List[str]:
+    """Return every dotted path referenced by an override object (set + unset)."""
+    set_map: Dict[str, Any] = _override_part(overrides, "set", {})
+    unset_list: List[str] = _override_part(overrides, "unset", [])
+    return list(set_map.keys()) + list(unset_list)
 
 
 def substitute_dynamic_values(value: Any, dynamic: Mapping[str, Any]) -> Any:
@@ -84,18 +88,24 @@ def _unset_by_path(target: Dict[str, Any], path: str) -> None:
     node.pop(keys[-1], None)
 
 
-def guard_protected_paths(paths: Iterable[str], protected_paths: Sequence[str]) -> None:
+def guard_protected_paths(
+    paths: Iterable[str],
+    protected_paths: Sequence[str],
+    provider: Optional[str] = None,
+) -> None:
     """Reject any path that targets a protected field (prefix semantics).
 
     A protected path ``P`` blocks ``P`` and any path prefixed by ``P.``.
-    Raises ``ValueError`` naming the first offending path.
+    Raises ``ValueError`` naming the first offending path, the protected field,
+    and (when given) the provider that depends on it.
     """
+    where = f" for provider '{provider}'" if provider else ""
     for path in paths:
         for protected in protected_paths:
             if path == protected or path.startswith(protected + "."):
                 raise ValueError(
                     f"request override path '{path}' targets protected field "
-                    f"'{protected}', which OckBench manages and cannot be overridden"
+                    f"'{protected}'{where}, which OckBench manages and cannot be overridden"
                 )
 
 
@@ -152,19 +162,38 @@ def _redact_value(value: Any) -> Any:
     return value
 
 
-def redact_config(config_dict: Dict[str, Any]) -> Dict[str, Any]:
-    """Return a copy of a serialized config with secrets masked.
+def redact_request(request: Dict[str, Any]) -> Dict[str, Any]:
+    """Mask any secret-keyed entries inside a built outgoing request dict.
 
-    Masks the top-level ``api_key`` and, for every ``request_overrides.set``
-    entry, masks the whole value when the leaf path key is secret-like and
-    otherwise recurses into the value to mask any nested secret-keyed entries.
+    Used by the inspect surface so a resolved request can be printed without
+    leaking a key/token/credential injected through an override (e.g.
+    ``extra_headers.Authorization``).
     """
-    redacted = copy.deepcopy(config_dict)
+    return _redact_value(request)
 
-    if redacted.get("api_key"):
-        redacted["api_key"] = MASK
 
-    overrides = redacted.get("request_overrides")
+def redact_url(url: Any) -> Any:
+    """Mask credentials embedded in a URL's userinfo, e.g. ``https://u:p@host``.
+
+    Non-string or credential-free URLs are returned unchanged.
+    """
+    if not isinstance(url, str) or "@" not in url:
+        return url
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return url
+    if not parts.username and not parts.password:
+        return url
+    host = parts.hostname or ""
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    netloc = f"{MASK}@{host}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+def _redact_overrides_set(overrides: Any) -> None:
+    """In place: mask secret-keyed entries inside an ``{set, unset}`` mapping."""
     if isinstance(overrides, dict):
         set_map = overrides.get("set")
         if isinstance(set_map, dict):
@@ -172,5 +201,32 @@ def redact_config(config_dict: Dict[str, Any]) -> Dict[str, Any]:
                 path: (MASK if _is_secret_key(path.split(".")[-1]) else _redact_value(value))
                 for path, value in set_map.items()
             }
+
+
+def redact_config(config_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a copy of a serialized config with every secret masked.
+
+    Masks the top-level ``api_key``, credentials embedded in ``base_url``, the
+    math judge's credentials (``judge.api_key`` and ``judge.base_url`` userinfo),
+    and — for every ``request_overrides.set`` entry (top-level and judge) — the
+    whole value when the leaf path key is secret-like, otherwise recursing to
+    mask nested secret-keyed entries.
+    """
+    redacted = copy.deepcopy(config_dict)
+
+    if redacted.get("api_key"):
+        redacted["api_key"] = MASK
+    if redacted.get("base_url"):
+        redacted["base_url"] = redact_url(redacted["base_url"])
+
+    _redact_overrides_set(redacted.get("request_overrides"))
+
+    judge = redacted.get("judge")
+    if isinstance(judge, dict):
+        if judge.get("api_key"):
+            judge["api_key"] = MASK
+        if judge.get("base_url"):
+            judge["base_url"] = redact_url(judge["base_url"])
+        _redact_overrides_set(judge.get("request_overrides"))
 
     return redacted

@@ -1,12 +1,19 @@
-"""Science evaluator for multiple-choice questions (A/B/C/D)."""
+"""Science evaluator for multiple-choice questions (A/B/C/D).
+
+Scoring semantics are unchanged (golden-tested): the same regex extraction
+patterns and the same multiple-choice comparison. Only the call surface is
+adapted to the async evaluator interface.
+"""
 import logging
 import re
 from typing import Any, Optional, Tuple
 
+from .base import EvalResult, Evaluator, register_evaluator
+
 logger = logging.getLogger(__name__)
 
 
-class ScienceEvaluator:
+class ScienceEvaluator(Evaluator):
     def __init__(self):
         self.valid_choices = {'A', 'B', 'C', 'D'}
 
@@ -53,8 +60,12 @@ class ScienceEvaluator:
             gt_normalized = gt_match.group(1)
         return pred_normalized == gt_normalized
 
-    def evaluate(self, response: str, ground_truth: Any):
-        from . import EvalResult
+    async def evaluate(self, problem, response: str) -> EvalResult:
         extracted_answer, method = self.extract_answer(response)
-        is_correct = self.compare_answers(extracted_answer, ground_truth)
+        is_correct = self.compare_answers(extracted_answer, problem.answer)
         return EvalResult(is_correct=is_correct, extracted_answer=extracted_answer, extraction_method=method)
+
+
+@register_evaluator("science")
+def _build_science_evaluator(config) -> ScienceEvaluator:
+    return ScienceEvaluator()

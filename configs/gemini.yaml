@@ -1,4 +1,4 @@
-# OckBench - Gemini
+# OckBench - Gemini (official provider)
 # Switch task by changing dataset_path and evaluator_type:
 #   math:    data/OckBench_math.jsonl    + evaluator_type: math
 #   coding:  data/OckBench_coding.jsonl  + evaluator_type: code
@@ -8,8 +8,18 @@ dataset_path: data/OckBench_math.jsonl
 dataset_name: OckBench_math
 provider: gemini
 model: gemini-3.1-pro-preview
+# api_key: pass via CLI --api-key or env GEMINI_API_KEY
 max_output_tokens: 65536
+# Reasoning/thinking is shaped uniformly via request_overrides; for Gemini the
+# thinking budget lives under config.thinking_config (uncomment to set):
+# request_overrides:
+#   set:
+#     config.thinking_config.thinking_budget: 8192
 concurrency: 20
 timeout: 120
 max_retries: 3
 evaluator_type: math
+judge:
+  model: gpt-4o-mini
+  base_url: https://api.openai.com/v1
+  # api_key: pass via env JUDGE_API_KEY or OPENAI_API_KEY

@@ -1,68 +1,61 @@
 """OpenAI Responses API client (/v1/responses) with streaming."""
 import json
 import logging
-from typing import Optional
+from typing import Any, Dict
 
 import httpx
 
 from ..core.schemas import ModelResponse
 from ..utils.usage_normalizer import extract_responses_usage, to_token_usage
 from .base import BaseModelClient
+from .registry import register_provider
 
 logger = logging.getLogger(__name__)
 
 
+@register_provider("openai-responses")
 class OpenAIResponsesClient(BaseModelClient):
-    """Client for OpenAI /v1/responses (models that only support this endpoint)."""
+    """Client for OpenAI /v1/responses (models that only support this endpoint).
 
-    def __init__(
-        self,
-        model: str,
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
-        timeout: int = 120,
-        max_retries: int = 3,
-        **kwargs
-    ):
-        super().__init__(model, api_key, base_url, timeout, max_retries, **kwargs)
+    Reasoning placement is not hard-coded: by default the base request carries
+    ``temperature``; a reasoning model is configured by overriding the request
+    (e.g. set ``reasoning.effort`` and unset ``temperature``), uniformly with
+    every other provider.
+    """
 
-        self.endpoint = (base_url or "https://api.openai.com/v1").rstrip("/")
-        if not self.endpoint.endswith("/v1"):
-            if "/v1" not in self.endpoint:
-                self.endpoint += "/v1"
+    protected_paths = ("model", "input", "stream")
+    provider_name = "openai-responses"
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        self.endpoint = (self.base_url or "https://api.openai.com/v1").rstrip("/")
+        if "/v1" not in self.endpoint:
+            self.endpoint += "/v1"
         self.responses_url = self.endpoint + "/responses"
 
         self.headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key or 'dummy-key'}",
+            "Authorization": f"Bearer {self.api_key or 'dummy-key'}",
         }
 
+        # httpx does not auto-retry; BaseModelClient.generate is the sole retry owner.
         self._http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(timeout, connect=30.0),
+            timeout=httpx.Timeout(self.timeout, connect=30.0),
         )
 
-    async def _call_api(
-        self,
-        prompt: str,
-        temperature: float = 0.0,
-        max_output_tokens: int = 4096,
-        **kwargs
-    ) -> ModelResponse:
-        request_body = {
+    def build_request(self, prompt: str, max_output_tokens: int) -> Dict[str, Any]:
+        request: Dict[str, Any] = {
             "model": self.model,
             "input": prompt,
             "max_output_tokens": max_output_tokens,
             "stream": True,
         }
+        if self.temperature is not None:
+            request["temperature"] = self.temperature
+        return request
 
-        # Reasoning models take reasoning.effort and reject temperature; others
-        # take temperature. Set via the reasoning_effort config field (YAML).
-        reasoning_effort = kwargs.get("reasoning_effort")
-        if reasoning_effort:
-            request_body["reasoning"] = {"effort": reasoning_effort}
-        else:
-            request_body["temperature"] = temperature
-
+    async def _dispatch(self, request: Dict[str, Any]) -> ModelResponse:
         try:
             text = ""
             model_name = self.model
@@ -73,14 +66,12 @@ class OpenAIResponsesClient(BaseModelClient):
             completed_event = False
 
             async with self._http_client.stream(
-                "POST", self.responses_url, headers=self.headers, json=request_body
+                "POST", self.responses_url, headers=self.headers, json=request
             ) as resp:
                 if resp.status_code != 200:
                     await resp.aread()
                     raise httpx.HTTPStatusError(
-                        f"HTTP {resp.status_code}",
-                        request=resp.request,
-                        response=resp,
+                        f"HTTP {resp.status_code}", request=resp.request, response=resp,
                     )
 
                 async for chunk in resp.aiter_text():
@@ -135,18 +126,17 @@ class OpenAIResponsesClient(BaseModelClient):
                     )
 
             return ModelResponse(
-                text=text,
-                tokens=tokens,
-                latency=0,
-                model=model_name,
-                finish_reason=status,
-                error=error,
+                text=text, tokens=tokens, latency=0, model=model_name,
+                finish_reason=status, error=error,
             )
 
         except httpx.HTTPStatusError as e:
             error_body = e.response.text if hasattr(e.response, 'text') else str(e)
             logger.error(f"Responses API HTTP error: {e.response.status_code} - {error_body}")
-            raise Exception(f"Error code: {e.response.status_code} - {error_body}")
+            # Carry status_code so the base layer can classify non-retryable errors.
+            wrapped = Exception(f"Error code: {e.response.status_code} - {error_body}")
+            wrapped.status_code = e.response.status_code
+            raise wrapped
         except Exception as e:
             logger.error(f"Responses API error: {e}")
             raise

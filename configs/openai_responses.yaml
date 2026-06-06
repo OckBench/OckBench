@@ -1,0 +1,25 @@
+# OckBench - OpenAI Responses API (/v1/responses)
+# For models served only through the Responses endpoint.
+
+dataset_path: data/OckBench_math.jsonl
+dataset_name: OckBench_math
+provider: openai-responses
+model: o4-mini
+# api_key: pass via CLI --api-key or env OPENAI_API_KEY
+base_url: https://api.openai.com/v1
+max_output_tokens: 100000
+# Reasoning model: set reasoning effort and drop temperature, uniformly via
+# the request-shaping seam (no per-provider hard-coding).
+request_overrides:
+  set:
+    reasoning.effort: high
+  unset:
+    - temperature
+concurrency: 10
+timeout: 600
+max_retries: 3
+evaluator_type: math
+judge:
+  model: gpt-4o-mini
+  base_url: https://api.openai.com/v1
+  # api_key: pass via env JUDGE_API_KEY or OPENAI_API_KEY

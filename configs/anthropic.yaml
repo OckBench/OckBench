@@ -1,0 +1,23 @@
+# OckBench - Anthropic (official provider, Messages API)
+# Switch task by changing dataset_path and evaluator_type.
+
+dataset_path: data/OckBench_math.jsonl
+dataset_name: OckBench_math
+provider: anthropic
+model: claude-opus-4-8
+# api_key: pass via CLI --api-key or env ANTHROPIC_API_KEY
+base_url: https://api.anthropic.com
+max_output_tokens: 64000
+# Reasoning is shaped uniformly via request_overrides. The default thinking
+# block is overridable; set the effort hint via output_config.effort:
+request_overrides:
+  set:
+    output_config.effort: high
+concurrency: 5
+timeout: 600
+max_retries: 3
+evaluator_type: math
+judge:
+  model: gpt-4o-mini
+  base_url: https://api.openai.com/v1
+  # api_key: pass via env JUDGE_API_KEY or OPENAI_API_KEY

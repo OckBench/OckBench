@@ -22,6 +22,15 @@ def main() -> int:
     try:
         config = build_config(args)
         cache = config.pop('cache', None)
+
+        # Dry-run: resolve config and print the sanitized request, no network.
+        if getattr(args, 'inspect', False):
+            from src.core.inspect import build_inspection, format_inspection
+            from src.core.schemas import BenchmarkConfig
+            cfg = BenchmarkConfig(**config)
+            print(format_inspection(build_inspection(cfg)))
+            return 0
+
         experiment = run_benchmark(
             config_path=None,
             output_dir=args.output_dir,

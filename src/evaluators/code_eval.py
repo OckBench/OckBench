@@ -1,4 +1,10 @@
-"""Code evaluator: extract, execute in subprocess with timeout, validate against tests."""
+"""Code evaluator: extract, execute in subprocess with timeout, validate tests.
+
+Scoring semantics are unchanged (golden-tested): the same extraction patterns,
+the same subprocess test harness, and the same pass/fail accounting. Only the
+call surface is adapted to the async evaluator interface; test cases come from
+``problem.metadata['test_cases']``.
+"""
 import logging
 import os
 import re
@@ -6,10 +12,12 @@ import subprocess
 import tempfile
 from typing import List, Optional, Tuple
 
+from .base import EvalResult, Evaluator, register_evaluator
+
 logger = logging.getLogger(__name__)
 
 
-class CodeEvaluator:
+class CodeEvaluator(Evaluator):
     def __init__(self, timeout: int = 5):
         self.timeout = timeout
         self.extraction_patterns = [
@@ -175,8 +183,8 @@ class CodeEvaluator:
             except Exception:
                 pass
 
-    def evaluate(self, response: str, test_cases: List[str]):
-        from . import EvalResult
+    async def evaluate(self, problem, response: str) -> EvalResult:
+        test_cases = (problem.metadata or {}).get('test_cases', [])
         extracted_code, extraction_method = self.extract_code(response)
 
         if not extracted_code:
@@ -190,3 +198,8 @@ class CodeEvaluator:
             is_correct=all_passed, extracted_answer=extracted_code, extraction_method=extraction_method,
             tests_passed=tests_passed, tests_total=tests_total, execution_error=error_message,
         )
+
+
+@register_evaluator("code")
+def _build_code_evaluator(config) -> CodeEvaluator:
+    return CodeEvaluator(timeout=config.execution_timeout)

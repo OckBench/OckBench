@@ -1,0 +1,21 @@
+# OckBench - Third-party relay (OpenAI-compatible proxy / aggregator)
+# A relay exposes an OpenAI-compatible surface at a custom base_url. Use the
+# chat_completion provider and shape any relay-specific fields via overrides.
+
+dataset_path: data/OckBench_science.jsonl
+dataset_name: OckBench_science
+provider: chat_completion
+model: anthropic/claude-opus-4-8
+# api_key: pass via CLI --api-key (the relay's key)
+base_url: https://openrouter.ai/api/v1
+max_output_tokens: 32000
+# Relay-specific knobs go through request_overrides. Headers and reasoning
+# controls are set the same way as for any provider; secrets in headers are
+# masked in saved provenance and in --inspect output.
+request_overrides:
+  set:
+    extra_body.reasoning.effort: high
+concurrency: 10
+timeout: 600
+max_retries: 3
+evaluator_type: science

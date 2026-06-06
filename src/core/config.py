@@ -42,6 +42,15 @@ def _apply_env_vars(config_dict: Dict[str, Any]) -> Dict[str, Any]:
                 config_dict['api_key'] = os.getenv(env_var)
                 break
 
+    # Resolve the math judge's API key from the environment when configured
+    # without one (JUDGE_API_KEY preferred, then OPENAI_API_KEY).
+    judge = config_dict.get('judge')
+    if isinstance(judge, dict) and not judge.get('api_key'):
+        for env_var in ('JUDGE_API_KEY', 'OPENAI_API_KEY'):
+            if os.getenv(env_var):
+                judge['api_key'] = os.getenv(env_var)
+                break
+
     return config_dict
 
 

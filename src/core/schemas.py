@@ -1,13 +1,15 @@
 """Pydantic schemas for OckBench."""
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-from ..utils.request_overrides import CHAT_COMPLETION_PROTECTED_PATHS, guard_protected_paths
-
 logger = logging.getLogger(__name__)
+
+# Result/cache schema version. Bump when the on-disk result or cache shape
+# changes in a way that affects reproducibility or aggregation.
+SCHEMA_VERSION = "2.0"
 
 
 class RequestOverrides(BaseModel):
@@ -22,12 +24,26 @@ class RequestOverrides(BaseModel):
 
     @model_validator(mode='after')
     def _validate_paths(self) -> 'RequestOverrides':
-        # Pydantic has already coerced/validated every path to str by this
-        # after-validator, so only the empty/whitespace case remains to check.
         for path in list(self.set.keys()) + self.unset:
             if not path.strip():
                 raise ValueError("request override paths must be non-empty strings")
         return self
+
+
+class JudgeConfig(BaseModel):
+    """Configuration for the math LLM judge (an OpenAI-compatible endpoint).
+
+    The judge scores the extracted answer block. ``request_overrides`` lets the
+    judge call be shaped the same way model requests are (e.g. to disable a local
+    thinking model's reasoning). Credentials are masked in saved provenance.
+    """
+
+    model: str = Field(...)
+    base_url: Optional[str] = Field(None)
+    api_key: Optional[str] = Field(None)
+    timeout: int = Field(60, gt=0)
+    max_tokens: int = Field(500, gt=0)
+    request_overrides: RequestOverrides = Field(default_factory=RequestOverrides)
 
 
 class BenchmarkConfig(BaseModel):
@@ -35,8 +51,11 @@ class BenchmarkConfig(BaseModel):
 
     dataset_path: str = Field(...)
     dataset_name: Optional[str] = Field(None)
+    dataset_split: Optional[str] = Field(None)
 
-    provider: Literal["chat_completion", "openai-responses", "anthropic", "gemini"] = Field(...)
+    # Free-form provider name resolved through the provider registry, so an
+    # externally registered provider is selectable without editing this schema.
+    provider: str = Field(...)
     model: str = Field(...)
     base_url: Optional[str] = Field(None)
     api_key: Optional[str] = Field(None)
@@ -46,12 +65,13 @@ class BenchmarkConfig(BaseModel):
     max_context_window: Optional[int] = Field(None, gt=0)
     top_p: Optional[float] = Field(None, ge=0.0, le=1.0)
 
-    # Retained for the openai-responses/anthropic providers, which apply it
-    # directly. For chat_completion it is removed (use request_overrides) and
-    # rejected by _handle_removed_fields. There is no CLI flag for it anymore.
-    reasoning_effort: Optional[str] = Field(None)
-
+    # All reasoning/thinking placement is expressed uniformly through
+    # request_overrides for every provider (no per-provider hard-coding).
     request_overrides: RequestOverrides = Field(default_factory=RequestOverrides)
+
+    # Math scoring uses this judge; it is required at run start when the
+    # evaluator is the math judge (enforced where the evaluator is built).
+    judge: Optional[JudgeConfig] = Field(None)
 
     concurrency: int = Field(5, gt=0)
     timeout: int = Field(120, gt=0)
@@ -64,74 +84,21 @@ class BenchmarkConfig(BaseModel):
     experiment_name: Optional[str] = Field(None)
     notes: Optional[str] = Field(None)
 
-    @model_validator(mode='before')
-    @classmethod
-    def _handle_removed_fields(cls, data: Any) -> Any:
-        # For chat_completion, provider/model placement is now user-driven, so
-        # the old reasoning_effort / enable_thinking inputs are removed there:
-        # reject a non-null value loudly with a request_overrides migration hint.
-        # (A null leftover from an older serialized config is not an intentional
-        # setting and is simply ignored.)
-        #
-        # reasoning_effort remains a working field for the openai-responses and
-        # anthropic providers (applied directly by those clients). enable_thinking
-        # was a chat_completion-only concern and stays fully removed; for the
-        # other providers it is ignored with a warning.
-        if not isinstance(data, dict):
-            return data
-        provider = data.get('provider')
-
-        if provider == 'chat_completion':
-            rejected = {
-                'reasoning_effort': "set 'reasoning_effort' via request_overrides",
-                'enable_thinking': "set 'extra_body.chat_template_kwargs.enable_thinking' via request_overrides",
-            }
-            present = [key for key in rejected if data.get(key) is not None]
-            if present:
-                hints = "; ".join(f"{key} -> {rejected[key]}" for key in present)
-                raise ValueError(
-                    f"removed config field(s) {present} for chat_completion: configure these "
-                    f"through request_overrides instead (see the README migration table). {hints}"
-                )
-        elif data.get('enable_thinking') is not None:
-            logger.warning(
-                "Ignoring removed config field 'enable_thinking' for provider '%s'; it was a "
-                "chat_completion-only setting.", provider,
-            )
-        return data
-
     @model_validator(mode='after')
     def validate_config(self) -> 'BenchmarkConfig':
         if self.provider == 'chat_completion':
             if not self.api_key:
-                raise ValueError(
-                    "chat_completion provider requires --api-key"
-                )
+                raise ValueError("chat_completion provider requires --api-key")
             if not self.base_url:
-                raise ValueError(
-                    "chat_completion provider requires --base-url"
-                )
+                raise ValueError("chat_completion provider requires --base-url")
 
         has_max_output = self.max_output_tokens is not None
         has_max_context = self.max_context_window is not None
 
         if has_max_output and has_max_context:
-            raise ValueError(
-                "max_output_tokens and max_context_window are mutually exclusive."
-            )
+            raise ValueError("max_output_tokens and max_context_window are mutually exclusive.")
         if not has_max_output and not has_max_context:
-            raise ValueError(
-                "Either max_output_tokens or max_context_window must be set."
-            )
-
-        # Single chokepoint for the protected-field guard: runs once here on the
-        # merged override object, so every config-construction path (CLI and
-        # YAML/config_path) is covered, not just the CLI parser.
-        if self.provider == 'chat_completion':
-            guard_protected_paths(
-                list(self.request_overrides.set.keys()) + self.request_overrides.unset,
-                CHAT_COMPLETION_PROTECTED_PATHS,
-            )
+            raise ValueError("Either max_output_tokens or max_context_window must be set.")
         return self
 
 
@@ -186,6 +153,10 @@ class EvaluationResult(BaseModel):
     extraction_method: Optional[str] = Field(None)
     finish_reason: Optional[str] = Field(None)
 
+    # Full outcome for math: the judge's free-text rationale (cached so a resume
+    # never re-invokes the judge).
+    judge_reasoning: Optional[str] = Field(None)
+
     tests_passed: Optional[int] = Field(None)
     tests_total: Optional[int] = Field(None)
     execution_error: Optional[str] = Field(None)
@@ -219,6 +190,7 @@ class ExperimentSummary(BaseModel):
 
 
 class ExperimentResult(BaseModel):
+    schema_version: str = Field(default=SCHEMA_VERSION)
     config: BenchmarkConfig = Field(...)
     results: List[EvaluationResult] = Field(...)
     summary: ExperimentSummary = Field(...)
@@ -241,14 +213,4 @@ class ExperimentResult(BaseModel):
         import json
         with open(filepath, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        # Result files written by older versions persist removed config fields.
-        # `enable_thinking` is fully removed, so always drop it. `reasoning_effort`
-        # is still a valid field for non-chat providers, so only drop it for a
-        # chat_completion config (where it is removed and would fail validation);
-        # otherwise keep it so non-chat results round-trip their configuration.
-        config = data.get('config')
-        if isinstance(config, dict):
-            config.pop('enable_thinking', None)
-            if config.get('provider') == 'chat_completion':
-                config.pop('reasoning_effort', None)
         return cls(**data)

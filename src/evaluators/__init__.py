@@ -1,14 +1,29 @@
-"""Evaluators for different task types."""
-from dataclasses import dataclass
-from typing import Any, Optional
+"""Evaluators for different task types.
 
+Importing this package registers the built-in evaluators (math, science, code)
+with the evaluator registry. External tasks register the same way by importing
+their own module that calls ``@register_evaluator``.
+"""
+from .base import (
+    EvalResult,
+    Evaluator,
+    available_evaluators,
+    get_evaluator,
+    register_evaluator,
+)
 
-@dataclass
-class EvalResult:
-    """Unified evaluation result from all evaluators."""
-    is_correct: bool
-    extracted_answer: Optional[Any]
-    extraction_method: str
-    tests_passed: Optional[int] = None
-    tests_total: Optional[int] = None
-    execution_error: Optional[str] = None
+# Import built-ins for their registration side effects.
+from .code_eval import CodeEvaluator
+from .math_eval import MathEvaluator
+from .science_eval import ScienceEvaluator
+
+__all__ = [
+    "EvalResult",
+    "Evaluator",
+    "available_evaluators",
+    "get_evaluator",
+    "register_evaluator",
+    "CodeEvaluator",
+    "MathEvaluator",
+    "ScienceEvaluator",
+]

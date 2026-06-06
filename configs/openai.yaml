@@ -1,4 +1,4 @@
-# OckBench - OpenAI
+# OckBench - OpenAI (official provider, chat completions)
 # Switch task by changing dataset_path and evaluator_type:
 #   math:    data/OckBench_math.jsonl    + evaluator_type: math
 #   coding:  data/OckBench_coding.jsonl  + evaluator_type: code
@@ -12,7 +12,7 @@ model: gpt-5.2
 base_url: https://api.openai.com/v1
 max_output_tokens: 128000
 # Reasoning model (gpt-5.x): redirect the token budget, set reasoning effort,
-# and drop temperature — reproduces the former built-in reasoning-model handling.
+# and drop temperature — all through the uniform request-shaping seam.
 request_overrides:
   set:
     max_completion_tokens: ${max_output_tokens}
@@ -24,3 +24,8 @@ concurrency: 10
 timeout: 600
 max_retries: 3
 evaluator_type: math
+# Math is scored by an LLM judge (required). Provide its endpoint/model/key.
+judge:
+  model: gpt-4o-mini
+  base_url: https://api.openai.com/v1
+  # api_key: pass via env JUDGE_API_KEY or OPENAI_API_KEY

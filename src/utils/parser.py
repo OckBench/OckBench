@@ -51,13 +51,16 @@ Examples:
         """,
     )
 
-    # Provider preset
+    # Provider: resolved through the provider registry. The four built-ins are
+    # chat_completion / openai-responses / anthropic / gemini; an externally
+    # registered provider name is accepted too (no fixed choice list).
     parser.add_argument(
         "--provider",
         type=str,
-        choices=["chat_completion", "openai-responses", "anthropic", "gemini"],
-        default="chat_completion",
-        help="API provider type (default: chat_completion)",
+        default=None,
+        help="API provider name resolved via the provider registry "
+             "(built-ins: chat_completion, openai-responses, anthropic, gemini; default: chat_completion). "
+             "When omitted, a provider set in --config is kept.",
     )
 
     # Task preset
@@ -109,6 +112,12 @@ Examples:
         type=str,
         default=None,
         help="Name of the dataset for logging",
+    )
+    parser.add_argument(
+        "--dataset-split",
+        type=str,
+        default=None,
+        help="Dataset split/subset label recorded in result provenance (e.g. Selected, mini, full)",
     )
 
     # Generation parameters
@@ -184,13 +193,42 @@ Examples:
         help="Maximum number of retries per request",
     )
 
-    # Evaluation configuration
+    # Evaluation configuration. Resolved through the evaluator registry; the
+    # built-ins are math / code / science, plus any externally registered task.
     parser.add_argument(
         "--evaluator-type",
         type=str,
-        choices=["math", "code", "science"],
         default=None,
-        help="Type of evaluator to use",
+        help="Evaluator name resolved via the evaluator registry "
+             "(built-ins: math, code, science)",
+    )
+
+    # Math LLM judge (the default, required math scorer).
+    parser.add_argument(
+        "--judge-model",
+        type=str,
+        default=None,
+        help="Math judge model name (required for math scoring)",
+    )
+    parser.add_argument(
+        "--judge-base-url",
+        type=str,
+        default=None,
+        help="Math judge base URL (OpenAI-compatible endpoint)",
+    )
+    parser.add_argument(
+        "--judge-api-key",
+        type=str,
+        default=None,
+        help="Math judge API key (falls back to JUDGE_API_KEY / OPENAI_API_KEY env vars)",
+    )
+
+    # Dry-run / inspect: resolve config and print the sanitized request, no network.
+    parser.add_argument(
+        "--inspect",
+        action="store_true",
+        default=False,
+        help="Resolve config and print the sanitized outgoing request without any network call",
     )
     # Code evaluation specific
     parser.add_argument(
@@ -341,6 +379,7 @@ def build_config(args: argparse.Namespace) -> Dict[str, Any]:
         "base_url": args.base_url,
         "dataset_path": args.dataset_path,
         "dataset_name": args.dataset_name,
+        "dataset_split": args.dataset_split,
         "temperature": args.temperature,
         "max_output_tokens": args.max_output_tokens,
         "max_context_window": args.max_context_window,
@@ -365,6 +404,21 @@ def build_config(args: argparse.Namespace) -> Dict[str, Any]:
     for key, value in cli_overrides.items():
         if value is not None:
             config[key] = value
+
+    # Effective provider default: only when neither --config nor --provider set it,
+    # so an explicit provider in a config file is never clobbered by a CLI default.
+    config.setdefault("provider", "chat_completion")
+
+    # Assemble the math judge config: YAML base, CLI flags on top.
+    judge_cfg = dict(config.get("judge") or {})
+    if args.judge_model is not None:
+        judge_cfg["model"] = args.judge_model
+    if args.judge_base_url is not None:
+        judge_cfg["base_url"] = args.judge_base_url
+    if args.judge_api_key is not None:
+        judge_cfg["api_key"] = args.judge_api_key
+    if judge_cfg:
+        config["judge"] = judge_cfg
 
     # Handle mutual exclusivity of max_output_tokens and max_context_window
     # If user explicitly sets one via CLI, remove the other from config

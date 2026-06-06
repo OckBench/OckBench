@@ -1,85 +1,66 @@
 """OpenAI-compatible chat completions client (OpenAI, vLLM, SGLang, OpenRouter)."""
 import logging
-from typing import Optional
+from typing import Any, Dict
 
 import httpx
 from openai import AsyncOpenAI
 
 from ..core.schemas import ModelResponse, TokenUsage
-from ..utils.request_overrides import apply_request_overrides
 from ..utils.usage_normalizer import extract_openai_usage, to_token_usage
 from .base import BaseModelClient
+from .registry import register_provider
 
 logger = logging.getLogger(__name__)
 
 
+@register_provider("chat_completion")
 class OpenAIClient(BaseModelClient):
     """Client for any OpenAI-compatible chat completions endpoint."""
 
-    def __init__(
-        self,
-        model: str,
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
-        timeout: int = 120,
-        max_retries: int = 3,
-        **kwargs
-    ):
-        super().__init__(model, api_key, base_url, timeout, max_retries, **kwargs)
+    protected_paths = ("model", "messages", "stream", "stream_options")
+    provider_name = "chat_completion"
 
-        # max_retries=0: BaseModelClient.generate owns retry; SDK's own loop
-        # would stack with ours (up to 9 effective attempts).
-        # read timeout = per-chunk gap in streaming, not total deadline.
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+        # max_retries=0: BaseModelClient.generate owns retry; the SDK's own loop
+        # would stack with ours. read timeout = per-chunk gap during streaming.
         client_kwargs = {
-            'timeout': httpx.Timeout(connect=30.0, read=float(timeout), write=60.0, pool=30.0),
+            'timeout': httpx.Timeout(connect=30.0, read=float(self.timeout), write=60.0, pool=30.0),
             'max_retries': 0,
         }
-        if api_key:
-            client_kwargs['api_key'] = api_key
-        if base_url:
-            client_kwargs['base_url'] = base_url
+        if self.api_key:
+            client_kwargs['api_key'] = self.api_key
+        if self.base_url:
+            client_kwargs['base_url'] = self.base_url
             if 'api_key' not in client_kwargs:
                 client_kwargs['api_key'] = 'dummy-key'
 
         self.client = AsyncOpenAI(**client_kwargs)
 
-    async def _call_api(
-        self,
-        prompt: str,
-        temperature: float = 0.0,
-        max_output_tokens: int = 4096,
-        **kwargs
-    ) -> ModelResponse:
-        messages = [{"role": "user", "content": prompt}]
-
-        # Uniform base request. Provider/model-specific shaping is no longer
-        # hard-coded here; users control it through request overrides.
-        request_params = {
+    def build_request(self, prompt: str, max_output_tokens: int) -> Dict[str, Any]:
+        request: Dict[str, Any] = {
             "model": self.model,
-            "messages": messages,
+            "messages": [{"role": "user", "content": prompt}],
         }
-        if temperature is not None:
-            request_params["temperature"] = temperature
-        request_params["max_tokens"] = max_output_tokens
-        if kwargs.get("top_p") is not None:
-            request_params["top_p"] = kwargs["top_p"]
-        request_params["stream"] = True
-        request_params["stream_options"] = {"include_usage": True}
+        if self.temperature is not None:
+            request["temperature"] = self.temperature
+        request["max_tokens"] = max_output_tokens
+        if self.top_p is not None:
+            request["top_p"] = self.top_p
+        request["stream"] = True
+        request["stream_options"] = {"include_usage": True}
+        return request
 
-        request_params = apply_request_overrides(
-            request_params,
-            kwargs.get("request_overrides"),
-            {"max_output_tokens": max_output_tokens},
-        )
-
+    async def _dispatch(self, request: Dict[str, Any]) -> ModelResponse:
         try:
             text = ""
             reasoning_chars = 0
             finish_reason = None
             model_name = self.model
-            usage_data = None
+            usage_chunk = None
 
-            stream = await self.client.chat.completions.create(**request_params)
+            stream = await self.client.chat.completions.create(**request)
             async for chunk in stream:
                 if chunk.model:
                     model_name = chunk.model
@@ -96,20 +77,19 @@ class OpenAIClient(BaseModelClient):
                     if chunk.choices[0].finish_reason:
                         finish_reason = chunk.choices[0].finish_reason
                 if chunk.usage:
-                    usage_data = chunk
+                    usage_chunk = chunk
 
-            if usage_data:
-                tokens = self._extract_tokens(usage_data)
+            if usage_chunk:
+                tokens = self._extract_tokens(usage_chunk)
             else:
                 tokens = TokenUsage(
                     prompt_tokens=0, answer_tokens=0, reasoning_tokens=0,
                     output_tokens=0, total_tokens=0,
                 )
 
-            # Surface empty-text outcomes as errors so --cache resume will retry them.
-            # Common on third-party chat-completion proxies + reasoning models: the whole budget is
-            # spent on reasoning_content and the stream ends without ever emitting
-            # a content delta.
+            # Surface empty-text outcomes as errors so --cache resume will retry
+            # them. Common on reasoning models that spend the whole budget on
+            # reasoning_content and end the stream without a content delta.
             empty_error = None
             if not text:
                 if finish_reason == "length":
@@ -121,10 +101,9 @@ class OpenAIClient(BaseModelClient):
                 elif tokens.reasoning_tokens > 0 or reasoning_chars > 0:
                     empty_error = (
                         "empty_response_reasoning_only: model emitted reasoning tokens but "
-                        "no content (finish_reason="
-                        f"{finish_reason or 'unknown'})"
+                        f"no content (finish_reason={finish_reason or 'unknown'})"
                     )
-                elif usage_data is None:
+                elif usage_chunk is None:
                     empty_error = "empty_response_no_stream: no usage and no content received"
                 else:
                     empty_error = (

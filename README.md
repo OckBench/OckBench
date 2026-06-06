@@ -101,9 +101,11 @@ at request-build time with the per-problem output-token budget (so it still work
 with `--max-context-window`).
 
 The standard generation flags still work and land in their usual places:
-`--temperature`, `--top-p`, `--max-output-tokens`, `--max-context-window`. Four
-fields are managed by OckBench and protected from override (they back streaming
-and token accounting): `model`, `messages`, `stream`, `stream_options`.
+`--temperature`, `--top-p`, `--max-output-tokens`, `--max-context-window`. Each
+provider also protects the few request fields it depends on for streaming and
+token accounting (e.g. `model`, `messages`, `stream`, `stream_options` for
+`chat_completion`); an override targeting a protected field is rejected up front,
+naming the field and the provider.
 
 Equivalent YAML (CLI flags take precedence over YAML):
 
@@ -113,6 +115,50 @@ request_overrides:
     extra_body.chat_template_kwargs.enable_thinking: true
   unset:
     - temperature
+```
+
+### One request-shaping seam for every provider
+
+Request shaping is uniform across **all** providers — `chat_completion`,
+`openai-responses`, `anthropic`, and `gemini`. No provider hard-codes
+reasoning/thinking placement; you express it with the same `request_overrides`
+mechanism, targeting the field each provider expects:
+
+```yaml
+# openai-responses: reasoning effort, drop temperature
+provider: openai-responses
+request_overrides:
+  set: { reasoning.effort: high }
+  unset: [temperature]
+```
+
+```yaml
+# anthropic: effort hint (the default thinking block is overridable too)
+provider: anthropic
+request_overrides:
+  set: { output_config.effort: high }
+```
+
+```yaml
+# gemini: thinking budget lives under the SDK config dict
+provider: gemini
+request_overrides:
+  set: { config.thinking_config.thinking_budget: 8192 }
+```
+
+See `configs/` for a complete, runnable example per provider
+(`openai.yaml`, `openai_responses.yaml`, `anthropic.yaml`, `gemini.yaml`,
+`local.yaml`, `relay.yaml`).
+
+### Inspecting the resolved request (dry run)
+
+`--inspect` resolves a config and prints the exact outgoing request for any
+provider **without making a network call**. Every secret (API key, bearer
+tokens, credentials embedded in a `base_url`, secret headers, and the judge's
+credentials) is masked, so the output is safe to share:
+
+```bash
+python main.py --config configs/openai.yaml --api-key $OPENAI_API_KEY --inspect
 ```
 
 ### Migrating from the old `--enable-thinking` / `--reasoning-effort` flags
@@ -130,15 +176,11 @@ their values) have been removed. Reproduce each former behavior explicitly:
 
 > Add `--request-unset top_p` (shown above) only when you also pass `--top-p`; the `temperature`/`top_p` drops reproduce providers that ignore sampling params in thinking/reasoning mode. Omit any `--request-unset` for a field you never set.
 
-The request-override mechanism above applies to the `chat_completion` provider.
-For the `openai-responses` and `anthropic` providers, reasoning effort is still
-set with the `reasoning_effort` config field in YAML (there is no CLI flag), e.g.:
-
-```yaml
-provider: anthropic
-model: claude-...
-reasoning_effort: high   # -> Anthropic output_config.effort / Responses reasoning.effort
-```
+The request-override mechanism applies uniformly to **every** provider (see "One
+request-shaping seam for every provider" above). The dedicated `--reasoning-effort`
+and `--enable-thinking` flags — and the per-provider `reasoning_effort` config
+field — have been removed; reasoning/thinking is now expressed through
+`request_overrides` for all providers.
 
 ## Resuming Interrupted Runs
 
@@ -198,40 +240,99 @@ Results are saved to `results/` as JSON with per-problem detail and aggregate st
 
 Each task uses its own evaluator:
 
-- Math uses answer extraction by default. For publication-quality math numbers, run the optional LLM judge described below.
+- Math separates extraction from scoring: a regex isolates the `<answer>` block and an **LLM judge scores it** (the judge is required; see below).
 - Coding executes generated code against test cases.
 - Science extracts and checks the final multiple-choice answer.
 
 When comparing runs, keep dataset splits and model settings consistent. For example, do not compare a full-dataset run against a Selected-subset run, and keep thinking-enabled runs separate from non-thinking runs.
 
-## LLM-based Evaluation
+## Math LLM Judge (required for math)
 
-The default evaluators use regex-based answer extraction. For higher accuracy, you can re-evaluate results using an LLM judge with `scripts/llm_eval.py`:
+Math scoring is performed by an LLM judge — regex is used only to extract the
+`<answer>` block, which is then handed to the judge. There is **no regex-only
+math fallback**: a math run without a configured judge fails fast. Configure the
+judge in YAML or on the CLI:
 
-```bash
-# Re-evaluate a single math result file
-python scripts/llm_eval.py results/OckBench_math_gpt-5.2_*.json
-
-# Re-evaluate multiple math files with a specific model
-python scripts/llm_eval.py results/OckBench_math_*.json --model gpt-4o --concurrency 10
-
-# Use a custom output directory
-python scripts/llm_eval.py results/OckBench_math_*.json --output-dir llm_evaluated/
-
-# Use a local model as judge via OpenAI-compatible endpoint
-python scripts/llm_eval.py results/OckBench_math_*.json --model Qwen/Qwen3-4B \
-    --base-url http://localhost:8000/v1
-
-# For thinking-capable local judges, disable judge thinking if needed
-python scripts/llm_eval.py results/OckBench_math_*.json \
-    --model Qwen/Qwen3-4B --base-url http://localhost:8000/v1 --disable-thinking
+```yaml
+evaluator_type: math
+judge:
+  model: gpt-4o-mini
+  base_url: https://api.openai.com/v1
+  # api_key: via env JUDGE_API_KEY or OPENAI_API_KEY
 ```
 
-The script produces two output files per input:
-- `*_llm_eval.json`: detailed LLM judgments with agreement analysis between regex and LLM evaluators
-- `*_llm_rescored.json`: a copy of the original result file with accuracy and OckScore updated using LLM judgments
+```bash
+python main.py --config configs/openai.yaml --api-key $OPENAI_API_KEY \
+    --judge-model gpt-4o-mini --judge-base-url https://api.openai.com/v1 \
+    --judge-api-key $JUDGE_API_KEY
+```
 
-LLM judging is for math accuracy. Coding should remain code-test evaluated, and science should remain multiple-choice evaluated unless a new task-specific judge is added.
+The judge accepts its own `request_overrides`, so a local thinking model can be
+used as a judge with reasoning disabled (e.g.
+`extra_body.chat_template_kwargs.enable_thinking: false`); see `configs/local.yaml`.
+The judge's identity (model + endpoint) is recorded in result provenance; its key
+is never written to disk. Coding stays code-test evaluated and science stays
+multiple-choice evaluated.
+
+> The legacy post-hoc `scripts/llm_eval.py` re-scorer is retained for
+> re-evaluating older result files, but the inline judge above is now the
+> default, required math scorer.
+
+## Extending OckBench
+
+Providers and evaluators are resolved through registries, so you can add your
+own without editing the runner or config schema — just import a module that
+registers it.
+
+Custom provider:
+
+```python
+from src.models.base import BaseModelClient
+from src.models.registry import register_provider
+from src.core.schemas import ModelResponse, TokenUsage
+
+@register_provider("my-provider")
+class MyClient(BaseModelClient):
+    protected_paths = ("model",)        # fields you depend on
+    provider_name = "my-provider"
+
+    def build_request(self, prompt, max_output_tokens):
+        return {"model": self.model, "prompt": prompt, "budget": max_output_tokens}
+
+    async def _dispatch(self, request):  # the base owns retry; just send + parse
+        ...
+        return ModelResponse(text=..., tokens=TokenUsage(...), latency=0, model=self.model)
+```
+
+Custom task/evaluator:
+
+```python
+from src.evaluators.base import Evaluator, EvalResult, register_evaluator
+
+@register_evaluator("my-task")
+def build(config):
+    class MyEvaluator(Evaluator):
+        async def evaluate(self, problem, response):
+            return EvalResult(is_correct=..., extracted_answer=..., extraction_method="...")
+    return MyEvaluator()
+```
+
+Then select it by name: `--provider my-provider` / `--evaluator-type my-task`.
+Validate the resolved request first with `--inspect`.
+
+## Reproducibility: provenance & cache identity
+
+Result files carry a `schema_version`, the resolved (secret-masked) config —
+including request overrides and the math judge identity — provider/model and
+dataset identity, and the normalized token breakdown.
+
+The `--cache` file is the single source of truth: it stores an identity header
+(provider, model, dataset+split, prompt/template, resolved request shape,
+generation settings, output budget, judge identity, schema version) plus each
+problem's full outcome (including the judge verdict). Resuming with a different
+identity is refused with a message naming what changed, so results from
+different configurations never silently merge; the results file is a pure
+aggregation of the cache.
 
 ## Contributing
 
