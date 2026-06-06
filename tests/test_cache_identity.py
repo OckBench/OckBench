@@ -181,6 +181,17 @@ def test_cache_header_has_no_credentials():
         assert "s3cret" not in raw
 
 
+def test_cache_header_masks_query_string_credentials():
+    # Credentials in a base_url query string must not reach the cache header.
+    with tempfile.TemporaryDirectory() as tmp:
+        cache_path = str(Path(tmp) / "c.jsonl")
+        ds = _dataset(tmp)
+        RunCache.open(cache_path, _config("chat_completion", ds,
+                                          base_url="https://relay/v1?api_key=QUERYSECRET", api_key="k"))
+        raw = Path(cache_path).read_text()
+        assert "QUERYSECRET" not in raw
+
+
 def test_cache_header_redacts_override_secrets():
     # Secrets injected through request_overrides must not be written to the cache
     # identity header; non-secret override structure is retained.

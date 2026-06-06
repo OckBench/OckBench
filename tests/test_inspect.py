@@ -68,6 +68,35 @@ def test_inspect_masks_all_secrets():
     assert inspection["judge"]["model"] == "judge-m"
 
 
+def test_redact_url_masks_query_and_userinfo_credentials():
+    from src.utils.request_overrides import redact_url
+    # Query-string credential masked; non-secret param + host/path kept.
+    out = redact_url("https://relay.example.com/v1?api_key=QUERYSECRET&region=us")
+    assert "QUERYSECRET" not in out
+    assert "***MASKED***" in out and "relay.example.com" in out and "region=us" in out
+    # Userinfo credential still masked.
+    assert redact_url("https://u:p4ss@host/v1") == "https://***MASKED***@host/v1"
+    # Both at once.
+    both = redact_url("https://u:p4ss@host/v1?token=T")
+    assert "p4ss" not in both and "T" not in both.split("token=")[-1]
+    # Credential-free URL unchanged.
+    assert redact_url("https://host/v1?region=us") == "https://host/v1?region=us"
+
+
+def test_inspect_masks_query_string_credential():
+    cfg = BenchmarkConfig(
+        dataset_path="d.jsonl", provider="openai-responses", model="m",
+        base_url="https://relay.example.com/v1?api_key=QUERYSECRET&region=us",
+        api_key="k", max_output_tokens=100, evaluator_type="science",
+    )
+    inspection = build_inspection(cfg)
+    blob = format_inspection(inspection)
+    assert "QUERYSECRET" not in blob
+    assert "***MASKED***" in inspection["base_url"]
+    assert "relay.example.com" in inspection["base_url"]
+    assert "region=us" in inspection["base_url"]  # non-secret param preserved
+
+
 def test_inspect_protected_override_still_rejected():
     # Inspect builds the real client, so an illegal override fails fast here too.
     cfg = _provider_config("chat_completion",

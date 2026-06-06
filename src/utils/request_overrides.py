@@ -15,7 +15,7 @@ application (see ``guard_protected_paths``).
 """
 import copy
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 # Leaf keys whose values are masked when persisting overrides to saved output.
 SECRET_KEY_PATTERNS = ("key", "token", "secret", "authorization", "password")
@@ -173,23 +173,40 @@ def redact_request(request: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def redact_url(url: Any) -> Any:
-    """Mask credentials embedded in a URL's userinfo, e.g. ``https://u:p@host``.
+    """Mask credentials embedded in a URL.
 
-    Non-string or credential-free URLs are returned unchanged.
+    Covers both userinfo credentials (``https://u:p@host``) and secret-like query
+    parameters (``https://host/v1?api_key=SECRET``). Non-string or
+    credential-free URLs are returned unchanged.
     """
-    if not isinstance(url, str) or "@" not in url:
+    if not isinstance(url, str) or ("@" not in url and "?" not in url):
         return url
     try:
         parts = urlsplit(url)
     except ValueError:
         return url
-    if not parts.username and not parts.password:
+
+    changed = False
+    netloc = parts.netloc
+    if parts.username or parts.password:
+        host = parts.hostname or ""
+        if parts.port:
+            host = f"{host}:{parts.port}"
+        netloc = f"{MASK}@{host}"
+        changed = True
+
+    query = parts.query
+    if query:
+        pairs = parse_qsl(query, keep_blank_values=True)
+        redacted = [(key, MASK if _is_secret_key(key) else value) for key, value in pairs]
+        if redacted != pairs:
+            # safe="*" keeps the MASK sentinel readable instead of percent-encoded.
+            query = urlencode(redacted, safe="*")
+            changed = True
+
+    if not changed:
         return url
-    host = parts.hostname or ""
-    if parts.port:
-        host = f"{host}:{parts.port}"
-    netloc = f"{MASK}@{host}"
-    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+    return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
 
 
 def redact_override_set(set_map: Any) -> Any:
