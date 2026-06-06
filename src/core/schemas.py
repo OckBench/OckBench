@@ -84,6 +84,37 @@ class BenchmarkConfig(BaseModel):
     experiment_name: Optional[str] = Field(None)
     notes: Optional[str] = Field(None)
 
+    @model_validator(mode='before')
+    @classmethod
+    def _reject_legacy_reasoning_fields(cls, data: Any) -> Any:
+        # Reasoning/thinking is now configured uniformly through request_overrides
+        # for every provider. Reject the removed `reasoning_effort` /
+        # `enable_thinking` keys loudly so an old config does not silently run with
+        # a different request shape (pydantic would otherwise ignore them). A null
+        # leftover from an older serialized config is not an intentional setting
+        # and is ignored.
+        if not isinstance(data, dict):
+            return data
+        legacy = {
+            'reasoning_effort': (
+                "set reasoning effort via request_overrides — e.g. chat_completion "
+                "'reasoning_effort', openai-responses 'reasoning.effort', anthropic "
+                "'output_config.effort', gemini 'config.thinking_config.thinking_budget'"
+            ),
+            'enable_thinking': (
+                "set thinking via request_overrides — e.g. "
+                "'extra_body.chat_template_kwargs.enable_thinking'"
+            ),
+        }
+        present = [key for key in legacy if data.get(key) is not None]
+        if present:
+            hints = "; ".join(f"{key} -> {legacy[key]}" for key in present)
+            raise ValueError(
+                f"removed config field(s) {present}: reasoning/thinking is now configured "
+                f"through request_overrides for all providers. Migrate: {hints}"
+            )
+        return data
+
     @model_validator(mode='after')
     def validate_config(self) -> 'BenchmarkConfig':
         if self.provider == 'chat_completion':
@@ -213,4 +244,11 @@ class ExperimentResult(BaseModel):
         import json
         with open(filepath, 'r', encoding='utf-8') as f:
             data = json.load(f)
+        # Historical result files may carry the removed reasoning fields as
+        # provenance; drop them so old results still load. (Running configs that
+        # still set them are rejected at construction — see the validator above.)
+        config = data.get('config')
+        if isinstance(config, dict):
+            config.pop('reasoning_effort', None)
+            config.pop('enable_thinking', None)
         return cls(**data)
