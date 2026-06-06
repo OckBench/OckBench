@@ -100,11 +100,19 @@ for model in "${MODELS[@]}"; do
             echo "========================================="
 
             # Reasoning effort is now expressed via request_overrides (the old
-            # --reasoning-effort flag was removed). Math is scored by a required
-            # LLM judge (its key resolves from OPENAI_API_KEY).
+            # --reasoning-effort flag was removed). For OpenAI reasoning models we
+            # apply the full recipe: set the effort, redirect the budget to
+            # max_completion_tokens, and drop max_tokens/temperature (which the
+            # reasoning API rejects). Math is scored by a required LLM judge (its
+            # key resolves from OPENAI_API_KEY).
             extra_args=()
             if [[ "$effort" != "none" ]]; then
-                extra_args+=(--request-set "reasoning_effort=$effort")
+                extra_args+=(
+                    --request-set "reasoning_effort=$effort"
+                    --request-set 'max_completion_tokens=${max_output_tokens}'
+                    --request-unset max_tokens
+                    --request-unset temperature
+                )
             fi
             if [[ "$task" == "math" ]]; then
                 extra_args+=(--judge-model "$JUDGE_MODEL" --judge-base-url "$OPENAI_BASE_URL" \
