@@ -59,6 +59,24 @@ class Judge(Protocol):
         ...
 
 
+def _coerce_correct(value: Any) -> bool:
+    """Strictly interpret the judge's ``correct`` field.
+
+    Truthiness is unsafe here: a judge that emits a string boolean like
+    ``"correct": "false"`` would otherwise be read as True (non-empty string),
+    marking a wrong math answer correct. Only a real ``True``, a recognized
+    affirmative string (``true``/``yes``/``1``), or numeric ``1`` counts as
+    correct; anything else — including ``"false"`` — is False.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value == 1
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "yes", "1")
+    return False
+
+
 def parse_json_judgment(content: str) -> Dict[str, Any]:
     """Parse the judge JSON even if a thinking model emits surrounding text."""
     content = content.strip()
@@ -127,7 +145,7 @@ class LLMJudge:
                 content = (response.choices[0].message.content or "").strip()
                 verdict = parse_json_judgment(content)
                 return JudgeVerdict(
-                    correct=bool(verdict.get("correct", False)),
+                    correct=_coerce_correct(verdict.get("correct", False)),
                     extracted_answer=(str(verdict["extracted_answer"])
                                       if verdict.get("extracted_answer") is not None else None),
                     reasoning=str(verdict.get("reasoning", "")),

@@ -5,7 +5,7 @@ import pytest
 
 from src.core.schemas import BenchmarkConfig, JudgeConfig, Problem
 from src.evaluators import get_evaluator
-from src.evaluators.judge import JudgeVerdict, LLMJudge
+from src.evaluators.judge import JudgeVerdict, LLMJudge, _coerce_correct
 from src.evaluators.math_eval import MathEvaluator
 
 
@@ -136,3 +136,34 @@ def test_llm_judge_builds_request_and_parses_offline():
 def test_llm_judge_disables_sdk_retry():
     judge = LLMJudge(JudgeConfig(model="m", base_url="https://x/v1", api_key="k"))
     assert judge.client.max_retries == 0
+
+
+@pytest.mark.parametrize("value, expected", [
+    (True, True), (False, False),
+    ("true", True), ("True", True), ("yes", True), ("1", True),
+    ("false", False), ("False", False), ("no", False), ("0", False), ("", False),
+    (1, True), (0, False), (2, False),
+    (None, False), ("maybe", False),
+])
+def test_coerce_correct_strict(value, expected):
+    assert _coerce_correct(value) is expected
+
+
+def test_judge_string_false_is_not_correct():
+    # A judge emitting a string boolean "false" must NOT be read as correct.
+    judge = LLMJudge(JudgeConfig(model="m", base_url="https://x/v1", api_key="k"))
+
+    async def fake_create(**kwargs):
+        class _Msg:
+            content = '{"correct": "false", "extracted_answer": "5", "reasoning": "wrong"}'
+
+        class _Choice:
+            message = _Msg()
+
+        class _Resp:
+            choices = [_Choice()]
+        return _Resp()
+
+    judge.client.chat.completions.create = fake_create
+    verdict = asyncio.run(judge.score(question="q", ground_truth="6", candidate="5"))
+    assert verdict.correct is False
