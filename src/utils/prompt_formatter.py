@@ -38,15 +38,18 @@ def template_identity(evaluator_type: str) -> Dict[str, str]:
     """Deterministic identity of the prompt/template for a task type.
 
     Used in the cache run-identity so a template (or formatter-behavior) change
-    cannot silently resume into an old cache. Unknown evaluator types fall back
-    to the math template (matching ``format_prompt``), but keep their own name so
-    the identity stays distinct per task.
+    cannot silently resume into an old cache. A built-in task hashes its template;
+    an unknown/custom evaluator uses a neutral ``"raw"`` template (matching
+    ``format_prompt``), and the evaluator name keeps the identity distinct.
     """
-    template = _TEMPLATES.get(evaluator_type, MATH_PROMPT_TEMPLATE)
+    template = _TEMPLATES.get(evaluator_type)
+    template_hash = (
+        hashlib.sha256(template.encode("utf-8")).hexdigest() if template is not None else "raw"
+    )
     return {
         "evaluator_type": evaluator_type,
         "formatter_version": PROMPT_FORMATTER_VERSION,
-        "template_hash": hashlib.sha256(template.encode("utf-8")).hexdigest(),
+        "template_hash": template_hash,
     }
 
 
@@ -60,7 +63,10 @@ def format_prompt(problem: str, evaluator_type: str = "math", test_cases=None) -
                 problem_text = f"{problem}\n\nYour code must be able to pass these tests:\n{test_cases_str}"
         return CODE_PROMPT_TEMPLATE.format(problem=problem_text)
 
-    # Non-code tasks select from the same table template_identity hashes, so the
-    # "unknown falls back to math" contract is shared, not duplicated.
-    template = _TEMPLATES.get(evaluator_type, MATH_PROMPT_TEMPLATE)
+    template = _TEMPLATES.get(evaluator_type)
+    if template is None:
+        # Unknown/custom evaluator (registered via the extension point): use a
+        # neutral raw fallback rather than imposing the built-in math prompt, so a
+        # custom non-math task is not given inappropriate instructions.
+        return problem
     return template.format(problem=problem)
