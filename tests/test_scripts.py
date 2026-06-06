@@ -45,6 +45,16 @@ def test_math_runs_configure_judge(script):
     assert "--judge-base-url" in code, script.name
 
 
+def test_claude_script_judge_is_openai_compatible():
+    # LLMJudge speaks OpenAI chat-completions only; the Claude script must point
+    # the judge at an OpenAI-compatible endpoint, not the Anthropic base URL.
+    code = (SCRIPTS_DIR / "run_claude_benchmark.sh").read_text(encoding="utf-8")
+    assert "JUDGE_BASE_URL" in code
+    assert "api.openai.com" in code                       # OpenAI-compatible default
+    assert '--judge-base-url "$BASE_URL"' not in code      # not the Anthropic base
+    assert '--judge-base-url "$JUDGE_BASE_URL"' in code
+
+
 def test_openai_script_uses_full_reasoning_recipe():
     # The OpenAI reasoning runs must redirect the budget and drop sampling fields,
     # not merely set reasoning_effort.

@@ -17,6 +17,14 @@ BASE_URL="https://api.anthropic.com/v1/"
 CONCURRENCY=20
 TIMEOUT=600
 
+# Math is scored by an OpenAI-compatible LLM judge. Anthropic's API is NOT
+# OpenAI chat-completions compatible, so the judge must use a separate
+# OpenAI-compatible endpoint (default OpenAI; override via env). Its key comes
+# from JUDGE_API_KEY, falling back to OPENAI_API_KEY.
+JUDGE_MODEL="${JUDGE_MODEL:-gpt-4o-mini}"
+JUDGE_BASE_URL="${JUDGE_BASE_URL:-https://api.openai.com/v1}"
+JUDGE_API_KEY="${JUDGE_API_KEY:-${OPENAI_API_KEY:-}}"
+
 declare -A MODEL_TOKENS=(
     ["claude-opus-4-6"]=128000
     ["claude-sonnet-4-6"]=64000
@@ -53,6 +61,15 @@ for task in "${TASKS[@]}"; do
     fi
 done
 
+# Math needs an OpenAI-compatible judge key (the Anthropic key cannot judge).
+for task in "${TASKS[@]}"; do
+    if [[ "$task" == "math" && -z "$JUDGE_API_KEY" ]]; then
+        echo "Error: math scoring needs an OpenAI-compatible judge."
+        echo "  Set JUDGE_API_KEY (and optionally JUDGE_MODEL/JUDGE_BASE_URL), or OPENAI_API_KEY."
+        exit 1
+    fi
+done
+
 mkdir -p cache results
 
 # --- Run benchmarks ---
@@ -70,10 +87,10 @@ for task in "${TASKS[@]}"; do
         echo ""
         echo "--- $model | task=$task | max_tokens=$max_tokens ---"
 
-        # Math requires an LLM judge; reuse the same endpoint/key.
+        # Math requires an OpenAI-compatible LLM judge (not the Anthropic endpoint).
         judge_args=()
         if [[ "$task" == "math" ]]; then
-            judge_args=(--judge-model "$model" --judge-base-url "$BASE_URL" --judge-api-key "$ANTHROPIC_API_KEY")
+            judge_args=(--judge-model "$JUDGE_MODEL" --judge-base-url "$JUDGE_BASE_URL" --judge-api-key "$JUDGE_API_KEY")
         fi
 
         python main.py --provider chat_completion --model "$model" \
