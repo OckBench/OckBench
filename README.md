@@ -25,6 +25,23 @@ OckBench covers three subfields:
 
 OckBench is flexible and easy to use:
 
+## Datasets
+
+OckBench includes multiple dataset variants to evaluate LLMs across different problem difficulties and complexities:
+
+- **OckBench_math.jsonl**: Math reasoning problems with clear problem statements
+- **OckBench_science.jsonl**: Multiple-choice science questions with consistent formatting
+- **OckBench_coding.jsonl**: Standard code generation tasks with well-described specifications
+- **OckBench_coding_hard.jsonl**: Challenging coding dataset featuring:
+  - Higher problem complexity and ambiguity
+  - Mixed-language problems (English, Arabic, Turkish, Chinese)
+  - Poorly or incompletely described problem statements
+  - Edge cases and unconventional requirements
+  
+The coding_hard dataset is designed to stress-test LLM reasoning capabilities on more realistic, real-world scenarios where problem statements may be ambiguous or lack complete specifications.
+
+## Features
+
 - Works with OpenAI, Gemini, and any OpenAI-compatible endpoint (vLLM, SGLang, LMDeploy)
 - Reasoning tokens tracked separately — distinguish thinking from answering for models like o1/o3
 - Fault-tolerant: incremental caching lets interrupted runs resume exactly where they stopped
