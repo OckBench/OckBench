@@ -270,16 +270,29 @@ def test_missing_responses_usage_all_zero():
     assert extract_responses_usage({}) == NormalizedUsage()
 
 
-def test_reasoning_greater_than_output_may_go_negative_openai():
-    # No new clamp: answer = completion - reasoning, even if negative.
+def test_reasoning_greater_than_output_repaired_openai_without_text():
     n = extract_openai_usage(_OpenAIUsage(completion_tokens=10, reasoning_tokens=30))
-    assert n.answer_tokens == -20
+    assert n.answer_tokens == 0
+    assert n.reasoning_tokens == 10
+    assert n.answer_tokens + n.reasoning_tokens == n.output_tokens
 
 
-def test_reasoning_greater_than_output_may_go_negative_responses():
+def test_reasoning_greater_than_output_repaired_openai_with_text():
+    n = extract_openai_usage(
+        _OpenAIUsage(completion_tokens=10, reasoning_tokens=30),
+        final_text="12345678",
+    )
+    assert n.answer_tokens == 2
+    assert n.reasoning_tokens == 8
+    assert n.answer_tokens + n.reasoning_tokens == n.output_tokens
+
+
+def test_reasoning_greater_than_output_repaired_responses():
     n = extract_responses_usage({"input_tokens": 1, "output_tokens": 10,
                                 "output_tokens_details": {"reasoning_tokens": 30}})
-    assert n.answer_tokens == -20
+    assert n.answer_tokens == 0
+    assert n.reasoning_tokens == 10
+    assert n.answer_tokens + n.reasoning_tokens == n.output_tokens
 
 
 def test_gemini_primary_wins_over_fallback():

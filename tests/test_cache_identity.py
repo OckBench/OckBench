@@ -38,7 +38,7 @@ class _ErroringJudge:
         return JudgeVerdict(correct=False, extracted_answer=None, reasoning="", error="judge timeout")
 
 
-def _register_fixed_provider(name="fake-fixed"):
+def _register_fixed_provider(name="fake-fixed", calls=None):
     @registry.register_provider(name)
     class _FixedClient(BaseModelClient):
         protected_paths = ("model",)
@@ -48,6 +48,8 @@ def _register_fixed_provider(name="fake-fixed"):
             return {"model": self.model, "prompt": prompt}
 
         async def _dispatch(self, request):
+            if calls is not None:
+                calls.append(request)
             return ModelResponse(
                 text="<answer>6</answer>",
                 tokens=TokenUsage(prompt_tokens=10, answer_tokens=5, reasoning_tokens=15,
@@ -140,6 +142,22 @@ def test_judge_max_tokens_change_refused():
         with pytest.raises(CacheIdentityMismatch) as exc:
             RunCache.open(cache_path, _config("gemini", ds,
                           judge=JudgeConfig(model="j", base_url="https://j/v1", api_key="k", max_tokens=1000)))
+        assert "judge" in str(exc.value)
+
+
+def test_judge_runtime_identity_change_refused(monkeypatch):
+    # Code-level judge behavior (prompt/parser/default response_format/retry) can
+    # change verdicts even when YAML config is unchanged, so it is part of cache
+    # identity.
+    import src.evaluators.judge as judge_mod
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cache_path = str(Path(tmp) / "c.jsonl")
+        ds = _dataset(tmp)
+        RunCache.open(cache_path, _config("gemini", ds))
+        monkeypatch.setattr(judge_mod, "JUDGE_PARSER_VERSION", "changed")
+        with pytest.raises(CacheIdentityMismatch) as exc:
+            RunCache.open(cache_path, _config("gemini", ds))
         assert "judge" in str(exc.value)
 
 
@@ -236,6 +254,45 @@ def test_judge_outage_recorded_as_error_and_retried(monkeypatch):
             # Resume: the outaged problems were not completed -> they are re-judged.
             BenchmarkRunner(_config(provider, ds), cache_path=cache_path).run()
             assert judge.calls > calls_first
+    finally:
+        registry._PROVIDER_REGISTRY.pop(provider, None)
+
+
+def test_judge_outage_resume_rejudges_without_regenerating(monkeypatch):
+    class _SwitchingJudge:
+        def __init__(self):
+            self.calls = 0
+            self.fail = True
+
+        async def score(self, *, question, ground_truth, candidate):
+            self.calls += 1
+            if self.fail:
+                return JudgeVerdict(correct=False, extracted_answer=None, reasoning="", error="judge timeout")
+            return JudgeVerdict(correct=(str(candidate) == str(ground_truth)),
+                                extracted_answer=str(candidate), reasoning="ok")
+
+    provider_calls = []
+    provider = _register_fixed_provider("fake-fixed-rejudge-only", calls=provider_calls)
+    judge = _SwitchingJudge()
+    monkeypatch.setattr(math_eval, "build_judge", lambda cfg: judge)
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            ds = _dataset(tmp)
+            cache_path = str(Path(tmp) / "c.jsonl")
+            cfg = _config(provider, ds)
+
+            exp1 = BenchmarkRunner(cfg, cache_path=cache_path).run()
+            assert exp1.summary.error_count == 2
+            assert len(provider_calls) == 2
+            assert judge.calls == 2
+
+            judge.fail = False
+            exp2 = BenchmarkRunner(cfg, cache_path=cache_path).run()
+            assert len(provider_calls) == 2  # no second model-generation pass
+            assert judge.calls == 4
+            assert exp2.summary.error_count == 0
+            assert exp2.summary.correct_count == 1
+            assert exp2.summary.total_tokens == exp1.summary.total_tokens
     finally:
         registry._PROVIDER_REGISTRY.pop(provider, None)
 

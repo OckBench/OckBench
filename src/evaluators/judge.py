@@ -9,9 +9,10 @@ retry handles transient/parse failures.
 import asyncio
 import json
 import logging
+import random
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Protocol
+from typing import Any, Dict, Optional, Protocol, Sequence
 
 from openai import AsyncOpenAI
 
@@ -19,6 +20,38 @@ from ..core.schemas import JudgeConfig
 from ..utils.request_overrides import apply_request_overrides
 
 logger = logging.getLogger(__name__)
+
+JUDGE_PROMPT_VERSION = "math-grader-json-v1"
+JUDGE_PARSER_VERSION = "json-recovery-v2"
+DEFAULT_JUDGE_MAX_ATTEMPTS = 4
+# Judge endpoints drop out in bursty bad windows lasting tens of seconds
+# (transient zero-length responses; observed on both gateways). Retries only
+# help if they (a) span longer than a bad window and (b) are jittered so
+# concurrently-failing rows don't retry in lockstep and collide again.
+DEFAULT_JUDGE_BACKOFF: Sequence[float] = (5.0, 15.0, 45.0)
+DEFAULT_JUDGE_BACKOFF_JITTER = 3.0
+
+# Sent with every judge request and hashed into the cache identity via
+# runtime_identity() — one source, so changing a default here automatically
+# blocks resume into caches scored under the old defaults.
+JUDGE_REQUEST_DEFAULTS: Dict[str, Any] = {
+    "temperature": 0.0,
+    "response_format": {"type": "json_object"},
+}
+
+
+def runtime_identity() -> Dict[str, Any]:
+    """Identity of code-level judge behavior not otherwise present in config."""
+    return {
+        "prompt_version": JUDGE_PROMPT_VERSION,
+        "parser_version": JUDGE_PARSER_VERSION,
+        "request_defaults": JUDGE_REQUEST_DEFAULTS,
+        "retry": {
+            "max_attempts": DEFAULT_JUDGE_MAX_ATTEMPTS,
+            "backoff": list(DEFAULT_JUDGE_BACKOFF),
+            "jitter": DEFAULT_JUDGE_BACKOFF_JITTER,
+        },
+    }
 
 JUDGE_PROMPT_TEMPLATE = """\
 You are a math grader. Decide whether the student's answer matches the ground-truth answer.
@@ -101,15 +134,45 @@ def parse_json_judgment(content: str) -> Dict[str, Any]:
         except json.JSONDecodeError:
             continue
 
-    raise json.JSONDecodeError("No JSON object found in judge response", content, 0)
+    # Truncated-JSON recovery: with response_format=json_object a verbose judge can
+    # hit max_tokens mid-"reasoning", leaving the object unclosed. The verdict
+    # fields precede reasoning in our format, so recover them from the prefix
+    # instead of failing (and burning retries) on an otherwise-valid verdict.
+    if content.lstrip().startswith("{"):
+        m = re.search(r'"correct"\s*:\s*("?(?:true|false)"?)', content, flags=re.IGNORECASE)
+        if m:
+            out: Dict[str, Any] = {"correct": m.group(1).strip('"')}
+            m2 = re.search(r'"extracted_answer"\s*:\s*"((?:[^"\\]|\\.)*)"', content)
+            if m2:
+                try:
+                    out["extracted_answer"] = json.loads('"' + m2.group(1) + '"')
+                except json.JSONDecodeError:
+                    out["extracted_answer"] = m2.group(1)
+            m3 = re.search(r'"reasoning"\s*:\s*"((?:[^"\\]|\\.)*)', content)
+            if m3:
+                out["reasoning"] = m3.group(1)[:500] + " [truncated]"
+            return out
+
+    # NOTE: the trailing pos arg renders as "(char 0)" regardless of content —
+    # include the content head so refusals/prose are visible in the error itself.
+    raise json.JSONDecodeError(
+        f"No JSON object found in judge response (head: {content[:120]!r})", content, 0,
+    )
 
 
 class LLMJudge:
     """Default math judge backed by an OpenAI-compatible endpoint."""
 
-    def __init__(self, config: JudgeConfig, max_attempts: int = 3):
+    def __init__(self, config: JudgeConfig, max_attempts: int = DEFAULT_JUDGE_MAX_ATTEMPTS,
+                 backoff: Optional[Sequence[float]] = None):
         self.config = config
         self.max_attempts = max_attempts
+        self.backoff = tuple(backoff) if backoff is not None else DEFAULT_JUDGE_BACKOFF
+        # Force JSON output when the endpoint supports it: contest-style questions
+        # embedded in the judge prompt can hijack the judge into prose/solving mode
+        # (observed: AMO items -> non-JSON responses across judge models). Disabled
+        # automatically on endpoints that reject response_format.
+        self._json_mode = True
 
         client_kwargs: Dict[str, Any] = {"max_retries": 0}  # we own retry
         if config.api_key:
@@ -124,19 +187,20 @@ class LLMJudge:
         request: Dict[str, Any] = {
             "model": self.config.model,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.0,
+            "temperature": JUDGE_REQUEST_DEFAULTS["temperature"],
             "max_tokens": self.config.max_tokens,
         }
+        if self._json_mode:
+            request["response_format"] = JUDGE_REQUEST_DEFAULTS["response_format"]
         return apply_request_overrides(request, self.config.request_overrides, {})
 
     async def score(self, *, question: str, ground_truth: Any, candidate: str) -> JudgeVerdict:
         prompt = JUDGE_PROMPT_TEMPLATE.format(
             question=question, ground_truth=ground_truth, candidate=candidate,
         )
-        request = self._build_request(prompt)
-
         last_error: Optional[str] = None
         for attempt in range(self.max_attempts):
+            request = self._build_request(prompt)
             try:
                 response = await asyncio.wait_for(
                     self.client.chat.completions.create(**request),
@@ -155,9 +219,13 @@ class LLMJudge:
                 logger.warning(f"judge attempt {attempt + 1}/{self.max_attempts} failed: {last_error}")
             except Exception as e:  # noqa: BLE001
                 last_error = str(e)
+                if self._json_mode and "response_format" in last_error.lower():
+                    self._json_mode = False
+                    logger.warning("judge endpoint rejects response_format; disabling JSON mode")
                 logger.warning(f"judge attempt {attempt + 1}/{self.max_attempts} error: {last_error}")
             if attempt < self.max_attempts - 1:
-                await asyncio.sleep(2 ** attempt)
+                wait = self.backoff[min(attempt, len(self.backoff) - 1)]
+                await asyncio.sleep(wait + random.uniform(0, DEFAULT_JUDGE_BACKOFF_JITTER))
 
         return JudgeVerdict(correct=False, extracted_answer=None, reasoning="", error=last_error)
 

@@ -104,7 +104,7 @@ class OpenAIResponsesClient(BaseModelClient):
                     if saw_done:
                         break
 
-            normalized = extract_responses_usage(usage_payload)
+            normalized = extract_responses_usage(usage_payload, final_text=text)
             tokens = to_token_usage(normalized)
             reasoning_tokens = normalized.reasoning_tokens
 

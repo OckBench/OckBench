@@ -8,22 +8,52 @@ map a raw provider usage payload onto it. ``to_token_usage`` then converts a
 through unchanged so the existing schema-level auto-fill stays a no-op when the
 counts are already known.
 
-The adapters reproduce each provider's existing arithmetic exactly; no new
-clamping or guarding is introduced for the chat-completions, Responses, or
-Gemini paths (so a derived answer count may be negative when the provider
-reports more reasoning than total output, matching prior behavior). The
-Anthropic path is the only one that requires deriving the answer count from the
-visible text via a tokenizer; that work needs a network call, so it lives behind
-an injected ``count_tokens`` callback and an ``async`` normalize function, which
-keeps this module free of I/O and unit-testable without a network.
+The split between reasoning and visible-answer tokens is always repaired to
+stay non-negative and to preserve ``answer_tokens + reasoning_tokens ==
+output_tokens``. Some OpenAI-compatible relays report ``reasoning_tokens``
+larger than their combined output count; in that case the provider's
+``output_tokens`` total is kept, visible answer tokens are estimated from the
+final text when available, and the remainder is assigned to reasoning.
+
+The Anthropic path is the only one that requires deriving the answer count from
+the visible text via a tokenizer; that work needs a network call, so it lives
+behind an injected ``count_tokens`` callback and an ``async`` normalize
+function, which keeps this module free of I/O and unit-testable without a
+network.
 """
 import logging
+import math
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping, Optional
 
 from ..core.schemas import TokenUsage
 
 logger = logging.getLogger(__name__)
+
+
+def _estimate_visible_tokens(final_text: str) -> int:
+    """Cheap fallback used only when a provider reports an impossible split."""
+    if not final_text:
+        return 0
+    return max(1, math.ceil(len(final_text) / 4))
+
+
+def _repair_output_split(output_tokens: int, reasoning_tokens: int, final_text: str = "") -> tuple[int, int]:
+    """Return ``(answer_tokens, reasoning_tokens)`` with no negative counts.
+
+    The provider's combined output count is treated as authoritative. If the
+    reported reasoning count fits inside it, keep the provider split. If it does
+    not, estimate the visible-answer share from text and assign the remainder to
+    reasoning, preserving the combined output count.
+    """
+    output_tokens = max(int(output_tokens or 0), 0)
+    reasoning_tokens = max(int(reasoning_tokens or 0), 0)
+
+    if reasoning_tokens <= output_tokens:
+        return output_tokens - reasoning_tokens, reasoning_tokens
+
+    answer_tokens = min(_estimate_visible_tokens(final_text), output_tokens)
+    return answer_tokens, output_tokens - answer_tokens
 
 
 @dataclass
@@ -66,12 +96,12 @@ def to_token_usage(usage: NormalizedUsage) -> TokenUsage:
     )
 
 
-def extract_openai_usage(usage: Any) -> NormalizedUsage:
+def extract_openai_usage(usage: Any, final_text: str = "") -> NormalizedUsage:
     """Map an OpenAI-compatible chat-completions ``usage`` object.
 
     Reasoning tokens come from ``completion_tokens_details.reasoning_tokens`` when
-    present (else zero); the answer count is the remainder of the completion
-    tokens. No clamping is applied, matching the chat-completions client.
+    present (else zero). The combined completion count stays authoritative; an
+    impossible split is repaired using ``final_text`` when available.
     """
     prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
     completion_tokens = getattr(usage, "completion_tokens", 0) or 0
@@ -81,7 +111,9 @@ def extract_openai_usage(usage: Any) -> NormalizedUsage:
     if details is not None:
         reasoning_tokens = getattr(details, "reasoning_tokens", 0) or 0
 
-    answer_tokens = completion_tokens - reasoning_tokens
+    answer_tokens, reasoning_tokens = _repair_output_split(
+        completion_tokens, reasoning_tokens, final_text,
+    )
 
     return NormalizedUsage(
         prompt_tokens=prompt_tokens,
@@ -92,11 +124,12 @@ def extract_openai_usage(usage: Any) -> NormalizedUsage:
     )
 
 
-def extract_responses_usage(usage: Optional[Mapping[str, Any]]) -> NormalizedUsage:
+def extract_responses_usage(usage: Optional[Mapping[str, Any]], final_text: str = "") -> NormalizedUsage:
     """Map an OpenAI Responses API ``usage`` dict from the completed event.
 
     Reasoning tokens come from ``output_tokens_details.reasoning_tokens`` when
-    present (else zero); the answer count is the remainder of the output tokens.
+    present (else zero). The combined output count stays authoritative; an
+    impossible split is repaired using ``final_text`` when available.
     """
     usage = usage or {}
     prompt_tokens = usage.get("input_tokens", 0) or 0
@@ -108,7 +141,9 @@ def extract_responses_usage(usage: Optional[Mapping[str, Any]]) -> NormalizedUsa
     if details:
         reasoning_tokens = details.get("reasoning_tokens", 0) or 0
 
-    answer_tokens = output_tokens - reasoning_tokens
+    answer_tokens, reasoning_tokens = _repair_output_split(
+        output_tokens, reasoning_tokens, final_text,
+    )
 
     return NormalizedUsage(
         prompt_tokens=prompt_tokens,

@@ -9,7 +9,14 @@ from src.core.schemas import ModelResponse, TokenUsage
 from src.models import available_providers, create_provider
 from src.models.base import BaseModelClient
 from src.models.openai_api import OpenAIClient
-from tests.transport_fakes import drive_anthropic, drive_chat, drive_gemini, drive_responses
+from tests.transport_fakes import (
+    drive_anthropic,
+    drive_chat,
+    drive_gemini,
+    drive_responses,
+    openai_chunks,
+    responses_sse,
+)
 
 BUILTINS = ["chat_completion", "openai-responses", "anthropic", "gemini"]
 
@@ -39,6 +46,26 @@ def test_each_builtin_resolves_and_responds_via_registry():
     c = create_provider("gemini", model="g", api_key="k")
     _, resp = asyncio.run(drive_gemini(c))
     assert resp.text == "Hi"
+
+
+def test_openai_compatible_negative_token_split_repaired_from_text():
+    c = create_provider("chat_completion", model="m", api_key="k", base_url="https://x/v1")
+    _, resp = asyncio.run(drive_chat(
+        c,
+        chunks=openai_chunks(text="12345678", completion_tokens=10, reasoning_tokens=30, total_tokens=15),
+    ))
+    assert resp.tokens.answer_tokens == 2
+    assert resp.tokens.reasoning_tokens == 8
+    assert resp.tokens.output_tokens == 10
+
+    c = create_provider("openai-responses", model="m", api_key="k", base_url="https://x/v1")
+    _, resp = asyncio.run(drive_responses(
+        c,
+        body=responses_sse(text="12345678", output_tokens=10, reasoning_tokens=30, total_tokens=15),
+    ))
+    assert resp.tokens.answer_tokens == 2
+    assert resp.tokens.reasoning_tokens == 8
+    assert resp.tokens.output_tokens == 10
 
 
 def test_unknown_provider_enumerates_registered():

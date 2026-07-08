@@ -80,7 +80,7 @@ class OpenAIClient(BaseModelClient):
                     usage_chunk = chunk
 
             if usage_chunk:
-                tokens = self._extract_tokens(usage_chunk)
+                tokens = self._extract_tokens(usage_chunk, text)
             else:
                 tokens = TokenUsage(
                     prompt_tokens=0, answer_tokens=0, reasoning_tokens=0,
@@ -124,5 +124,5 @@ class OpenAIClient(BaseModelClient):
             logger.error(f"OpenAI API error: {e}")
             raise
 
-    def _extract_tokens(self, response) -> TokenUsage:
-        return to_token_usage(extract_openai_usage(response.usage))
+    def _extract_tokens(self, response, final_text: str = "") -> TokenUsage:
+        return to_token_usage(extract_openai_usage(response.usage, final_text=final_text))

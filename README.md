@@ -1,4 +1,4 @@
-<!-- markdownlint-disable MD001 MD041 -->
+<!-- markdownlint-disable MD001 MD013 MD041 -->
 <h1 align="center">OckBench</h1>
 
 <h3 align="center">
@@ -6,213 +6,343 @@ Efficiency-aware benchmark for LLM reasoning.
 </h3>
 
 <p align="center">
-| 📄 <a href="https://arxiv.org/abs/2511.05722"><b>Paper</b></a> | 🌐 <a href="https://ockbench.github.io/"><b>Website</b></a> | 🤗 <a href="https://huggingface.co/ockbench"><b>HuggingFace</b></a> |
+  <a href="https://arxiv.org/abs/2511.05722"><b>Paper</b></a> |
+  <a href="https://ockbench.github.io/"><b>Website</b></a> |
+  <a href="https://huggingface.co/ockbench"><b>HuggingFace</b></a>
 </p>
 
 ---
 
-## About
+## Overview
 
-OckBench benchmarks LLMs on reasoning tasks while tracking both accuracy and token usage. Most benchmarks only report accuracy — OckBench adds the other axis: how many tokens did the model spend to get there?
+OckBench evaluates LLM reasoning with two signals:
 
-We propose **OckScore**, a unified metric that rewards high accuracy achieved with fewer tokens. For more details, please refer to our [paper](https://arxiv.org/abs/2511.05722).
+- **Accuracy**: whether the model solves the task.
+- **Token cost**: how many prompt, answer, and reasoning tokens it spends.
 
-OckBench covers three subfields:
+The benchmark reports both raw accuracy and **OckScore**, a single score that
+penalizes unnecessary token use:
 
-- **Math**: open-ended math problems evaluated by answer extraction
-- **Coding**: code generation problems evaluated by executing against test cases
-- **Science**: multiple-choice science questions (A/B/C/D)
+```text
+OckScore = accuracy - 10 * log(avg_tokens_per_problem / 10000 + 1)
+```
 
-OckBench is flexible and easy to use:
+OckBench includes three task families:
 
-- Works with OpenAI, Gemini, and any OpenAI-compatible endpoint (vLLM, SGLang, LMDeploy)
-- Reasoning tokens tracked separately — distinguish thinking from answering for models like o1/o3
-- Fault-tolerant: incremental caching lets interrupted runs resume exactly where they stopped
-- YAML configs for reproducible experiments; all parameters also available as CLI flags
+| Task | Dataset preset | Evaluator |
+| --- | --- | --- |
+| Math | `data/OckBench_math.jsonl` | Extracts the model answer, then scores it with a required LLM judge |
+| Coding | `data/OckBench_coding.jsonl` | Executes generated code against tests |
+| Science | `data/OckBench_science.jsonl` | Extracts and checks the final multiple-choice answer |
 
-## Getting Started
+It supports OpenAI-compatible chat completions, OpenAI Responses API, Anthropic,
+Gemini, local vLLM/SGLang servers, and third-party OpenAI-compatible relays.
 
-Install from source:
+## Highlights
+
+- Efficiency-aware scoring with prompt, answer, reasoning, output, and total
+  token accounting.
+- First-class support for reasoning/thinking controls through uniform request
+  overrides instead of provider-specific flags.
+- Incremental JSONL cache for resumable benchmark runs.
+- Secret-masked provenance in result files and `--inspect` output.
+- Registry-based providers and evaluators for custom integrations.
+- YAML configs for reproducible runs, with CLI flags available for quick
+  experiments.
+
+## Installation
+
+OckBench requires Python 3.12 or newer.
 
 ```bash
 git clone https://github.com/OckBench/OckBench.git
 cd OckBench
+
 uv venv --python 3.12 --managed-python
 source .venv/bin/activate
 uv pip install -e .
 ```
 
-You must specify either `--max-output-tokens` or `--max-context-window` to control generation length:
+For development and tests:
 
-- `--max-output-tokens`: fixed output token budget per problem (use for API models with known limits)
-- `--max-context-window`: total context window size; output budget is dynamically calculated as `context_window - prompt_tokens` per problem (use for local models)
+```bash
+uv sync --dev
+```
 
-Run on OpenAI:
+## Quick Start
+
+Every run must specify exactly one output budget mode:
+
+- `--max-output-tokens`: fixed output-token budget per problem.
+- `--max-context-window`: total context window; OckBench estimates prompt
+  tokens and uses the remaining budget for output.
+
+### OpenAI-Compatible Chat Completions
 
 ```bash
 export OPENAI_API_KEY="sk-..."
 export OPENAI_BASE_URL="https://api.openai.com/v1"
-
-# Math is scored by an LLM judge (required) — pass the judge model + endpoint.
-# Its key resolves from JUDGE_API_KEY or OPENAI_API_KEY (exported above).
-python main.py --model gpt-5.2 --api-key $OPENAI_API_KEY --base-url $OPENAI_BASE_URL \
-    --task math --max-output-tokens 128000 \
-    --judge-model gpt-4o-mini --judge-base-url $OPENAI_BASE_URL
-
-# Coding and science use deterministic scorers (no judge needed).
-python main.py --model gpt-5.2 --api-key $OPENAI_API_KEY --base-url $OPENAI_BASE_URL \
-    --task coding --max-output-tokens 128000
-python main.py --model gpt-5.2 --api-key $OPENAI_API_KEY --base-url $OPENAI_BASE_URL \
-    --task science --max-output-tokens 128000
 ```
 
-Run on a local model via [vLLM](https://docs.vllm.ai/en/latest/usage/) (install vLLM first following their official docs):
+Math requires an LLM judge:
 
 ```bash
-# Start your model server first
-vllm serve Qwen/Qwen3-4B --port 8000
-
-# Then run the benchmark (math uses the judge; here the same local server judges,
-# with judge thinking disabled — see configs/local.yaml for the YAML form).
 python main.py \
-    --model Qwen/Qwen3-4B \
-    --api-key dummy \
-    --base-url http://localhost:8000/v1 \
-    --max-context-window 40960 \
-    --task math \
-    --judge-model Qwen/Qwen3-4B --judge-base-url http://localhost:8000/v1 --judge-api-key dummy
-
-# Coding/science need no judge:
-python main.py --model Qwen/Qwen3-4B --api-key dummy --base-url http://localhost:8000/v1 \
-    --max-context-window 40960 --task science
+  --model gpt-5.2 \
+  --api-key "$OPENAI_API_KEY" \
+  --base-url "$OPENAI_BASE_URL" \
+  --task math \
+  --max-output-tokens 128000 \
+  --judge-model gpt-4o-mini \
+  --judge-base-url "$OPENAI_BASE_URL"
 ```
 
-Use a YAML config for reproducibility (the bundled configs include the judge for
-math; `chat_completion` configs still need the model key via `--api-key`):
+Coding and science use deterministic evaluators, so no judge is needed:
 
 ```bash
-python main.py --config configs/openai.yaml --api-key $OPENAI_API_KEY
+python main.py \
+  --model gpt-5.2 \
+  --api-key "$OPENAI_API_KEY" \
+  --base-url "$OPENAI_BASE_URL" \
+  --task coding \
+  --max-output-tokens 128000
+
+python main.py \
+  --model gpt-5.2 \
+  --api-key "$OPENAI_API_KEY" \
+  --base-url "$OPENAI_BASE_URL" \
+  --task science \
+  --max-output-tokens 128000
 ```
 
-## Customizing the Request
+### Local vLLM or SGLang Server
 
-Different providers expect the same logical setting (thinking toggles, reasoning
-effort, the output-token field, which sampling params are allowed) in different
-places in the chat-completions request. Instead of hard-coding per-provider
-rules, OckBench lets you shape the outgoing request yourself with three flags:
+Start an OpenAI-compatible local server first:
 
-- `--request-set PATH=JSON_VALUE` — set a field at a dotted `PATH`. The value is
-  parsed as JSON (so `true`, `0.9`, `null`, `[...]`, `{...}` keep their types),
-  falling back to a plain string. Repeatable.
-- `--request-unset PATH` — remove the field at a dotted `PATH`. Repeatable.
-- `--request-set-json '<json-object>'` — set many fields at once from a JSON
-  object mapping dotted paths to values.
+```bash
+vllm serve Qwen/Qwen3-4B --port 8000
+```
 
-The placeholder `${max_output_tokens}` inside a `--request-set` value is replaced
-at request-build time with the per-problem output-token budget (so it still works
-with `--max-context-window`).
+Then run the benchmark:
 
-The standard generation flags still work and land in their usual places:
-`--temperature`, `--top-p`, `--max-output-tokens`, `--max-context-window`. Each
-provider also protects the few request fields it depends on for streaming and
-token accounting (e.g. `model`, `messages`, `stream`, `stream_options` for
-`chat_completion`); an override targeting a protected field is rejected up front,
-naming the field and the provider.
+```bash
+python main.py \
+  --model Qwen/Qwen3-4B \
+  --api-key dummy \
+  --base-url http://localhost:8000/v1 \
+  --task math \
+  --max-context-window 40960 \
+  --judge-model Qwen/Qwen3-4B \
+  --judge-base-url http://localhost:8000/v1 \
+  --judge-api-key dummy
+```
 
-Equivalent YAML (CLI flags take precedence over YAML):
+For coding or science:
+
+```bash
+python main.py \
+  --model Qwen/Qwen3-4B \
+  --api-key dummy \
+  --base-url http://localhost:8000/v1 \
+  --task science \
+  --max-context-window 40960
+```
+
+### YAML Configs
+
+Use bundled configs when you want reproducible provider settings:
+
+```bash
+python main.py --config configs/openai.yaml --api-key "$OPENAI_API_KEY"
+```
+
+CLI flags override YAML fields. The task preset is applied first, then YAML,
+then CLI overrides.
+
+Bundled configs:
+
+| Config | Provider | Intended use |
+| --- | --- | --- |
+| `configs/openai.yaml` | `chat_completion` | OpenAI-compatible chat completions |
+| `configs/openai_responses.yaml` | `openai-responses` | OpenAI `/v1/responses` endpoint |
+| `configs/anthropic.yaml` | `anthropic` | Anthropic Messages API |
+| `configs/gemini.yaml` | `gemini` | Gemini API |
+| `configs/local.yaml` | `chat_completion` | Local vLLM/SGLang server |
+| `configs/relay.yaml` | `chat_completion` | Third-party OpenAI-compatible relay |
+
+## Configuration Reference
+
+### Task Presets
+
+`--task` selects a default dataset and evaluator:
+
+| `--task` | Default dataset | Default evaluator |
+| --- | --- | --- |
+| `math` | `data/OckBench_math.jsonl` | `math` |
+| `coding` | `data/OckBench_coding.jsonl` | `code` |
+| `science` | `data/OckBench_science.jsonl` | `science` |
+
+You can override the dataset with `--dataset-path`, `--dataset-name`, and
+`--dataset-split`. Selected and mini splits are also included under `data/`.
+
+### Provider Keys
+
+`chat_completion` requires `api_key` and `base_url` via CLI or YAML because it
+is used for OpenAI, local servers, and relays. Other built-in providers can
+resolve keys from environment variables:
+
+| Provider | Environment fallback |
+| --- | --- |
+| `openai-responses` | `OPENAI_API_KEY` |
+| `anthropic` | `ANTHROPIC_API_KEY` |
+| `gemini` | `GEMINI_API_KEY` |
+| Math judge | `JUDGE_API_KEY`, then `OPENAI_API_KEY` |
+
+### Request Overrides
+
+Providers place reasoning, thinking, sampling, and token-budget knobs in
+different request fields. OckBench exposes one request-shaping mechanism for all
+providers:
+
+- `--request-set PATH=JSON_VALUE`: set a dotted request field. Values are parsed
+  as JSON first, then as strings.
+- `--request-unset PATH`: remove a dotted request field.
+- `--request-set-json '{"path": value}'`: set several fields at once.
+
+`${max_output_tokens}` is replaced at request-build time with the per-problem
+output budget, so it works with both fixed and context-window budgeting.
+
+Examples:
+
+```bash
+# Qwen thinking through vLLM/SGLang
+python main.py ... \
+  --request-set extra_body.chat_template_kwargs.enable_thinking=true
+```
 
 ```yaml
+# OpenAI-compatible reasoning model on chat completions
 request_overrides:
   set:
-    extra_body.chat_template_kwargs.enable_thinking: true
+    max_completion_tokens: ${max_output_tokens}
+    reasoning_effort: high
+  unset:
+    - max_tokens
+    - temperature
+    - top_p
+```
+
+```yaml
+# OpenAI Responses API
+provider: openai-responses
+request_overrides:
+  set:
+    reasoning.effort: high
   unset:
     - temperature
 ```
 
-### One request-shaping seam for every provider
-
-Request shaping is uniform across **all** providers — `chat_completion`,
-`openai-responses`, `anthropic`, and `gemini`. No provider hard-codes
-reasoning/thinking placement; you express it with the same `request_overrides`
-mechanism, targeting the field each provider expects:
-
 ```yaml
-# openai-responses: reasoning effort, drop temperature
-provider: openai-responses
-request_overrides:
-  set: { reasoning.effort: high }
-  unset: [temperature]
-```
-
-```yaml
-# anthropic: effort hint (the default thinking block is overridable too)
-provider: anthropic
-request_overrides:
-  set: { output_config.effort: high }
-```
-
-```yaml
-# gemini: thinking budget lives under the SDK config dict
+# Gemini thinking budget
 provider: gemini
 request_overrides:
-  set: { config.thinking_config.thinking_budget: 8192 }
+  set:
+    config.thinking_config.thinking_budget: 8192
 ```
 
-See `configs/` for a complete, runnable example per provider
-(`openai.yaml`, `openai_responses.yaml`, `anthropic.yaml`, `gemini.yaml`,
-`local.yaml`, `relay.yaml`).
+```yaml
+# Anthropic effort hint
+provider: anthropic
+request_overrides:
+  set:
+    output_config.effort: high
+```
 
-### Inspecting the resolved request (dry run)
+Overrides cannot replace provider-protected fields such as `model`, `messages`,
+`input`, `stream`, or stream options; invalid overrides fail before the run
+starts.
 
-`--inspect` resolves a config and prints the exact outgoing request for any
-provider **without making a network call**. Every secret (API key, bearer
-tokens, credentials embedded in a `base_url`, secret headers, and the judge's
-credentials) is masked, so the output is safe to share:
+### Inspect a Resolved Request
+
+Use `--inspect` to resolve the final config and print the exact sanitized
+request without making a network call:
 
 ```bash
-python main.py --config configs/openai.yaml --api-key $OPENAI_API_KEY --inspect
+python main.py --config configs/openai.yaml --api-key "$OPENAI_API_KEY" --inspect
 ```
 
-### Migrating from the old `--enable-thinking` / `--reasoning-effort` flags
+API keys, bearer tokens, secret headers, credentials embedded in URLs, and judge
+credentials are masked.
 
-These two flags (and the automatic `base_url`/model-name detection that placed
-their values) have been removed. Reproduce each former behavior explicitly:
+### Removed Reasoning Flags
 
-| Former behavior | Override flags |
-|-----------------|----------------|
-| Local vLLM/SGLang Qwen thinking toggle | `--request-set extra_body.chat_template_kwargs.enable_thinking=true` |
-| DeepSeek direct thinking (drops sampling params) | `--request-set extra_body.thinking.type=enabled --request-unset temperature --request-unset top_p` |
-| MiMo thinking (uses `max_completion_tokens`) | `--request-set extra_body.thinking.type=enabled --request-set max_completion_tokens='${max_output_tokens}' --request-unset max_tokens` |
-| OpenRouter reasoning | `--request-set extra_body.reasoning.enabled=true` (or `--request-set extra_body.reasoning.effort=high`) |
-| OpenAI reasoning models (o1/o3/o4/gpt-5): redirect token field, drop sampling params | `--request-set max_completion_tokens='${max_output_tokens}' --request-unset max_tokens --request-unset temperature --request-unset top_p --request-set reasoning_effort=high` |
+The older `--enable-thinking` and `--reasoning-effort` flags were removed.
+Express those settings through `request_overrides` instead:
 
-> Add `--request-unset top_p` (shown above) only when you also pass `--top-p`; the `temperature`/`top_p` drops reproduce providers that ignore sampling params in thinking/reasoning mode. Omit any `--request-unset` for a field you never set.
+| Former behavior | Current override |
+| --- | --- |
+| Local Qwen thinking toggle | `--request-set extra_body.chat_template_kwargs.enable_thinking=true` |
+| DeepSeek thinking, no sampling params | `--request-set extra_body.thinking.type=enabled --request-unset temperature --request-unset top_p` |
+| MiMo thinking with `max_completion_tokens` | `--request-set extra_body.thinking.type=enabled --request-set max_completion_tokens='${max_output_tokens}' --request-unset max_tokens` |
+| OpenRouter reasoning | `--request-set extra_body.reasoning.enabled=true` |
+| OpenAI reasoning model on chat completions | `--request-set max_completion_tokens='${max_output_tokens}' --request-unset max_tokens --request-unset temperature --request-unset top_p --request-set reasoning_effort=high` |
 
-The request-override mechanism applies uniformly to **every** provider (see "One
-request-shaping seam for every provider" above). The dedicated `--reasoning-effort`
-and `--enable-thinking` flags — and the per-provider `reasoning_effort` config
-field — have been removed; reasoning/thinking is now expressed through
-`request_overrides` for all providers.
+## Math Judge
 
-## Resuming Interrupted Runs
+Math scoring always uses an LLM judge. Regex extraction only isolates the
+`<answer>` block before judging; there is no regex-only scoring fallback.
 
-Pass `--cache <path>` to save results incrementally. If a run is interrupted, re-running the same command skips already-completed problems automatically.
+Configure the judge in YAML:
+
+```yaml
+evaluator_type: math
+judge:
+  model: gpt-4o-mini
+  base_url: https://api.openai.com/v1
+  # api_key: from JUDGE_API_KEY or OPENAI_API_KEY
+```
+
+Or on the CLI:
 
 ```bash
-# Start a run (configs/local.yaml already supplies the math judge)
-python main.py --config configs/local.yaml --cache cache/qwen3-4b-math.jsonl
+python main.py \
+  --config configs/openai.yaml \
+  --api-key "$OPENAI_API_KEY" \
+  --judge-model gpt-4o-mini \
+  --judge-base-url https://api.openai.com/v1 \
+  --judge-api-key "$JUDGE_API_KEY"
+```
 
-# Interrupted? Just re-run the same command — it picks up where it left off
+The judge has its own `request_overrides`, which is useful when using a local
+thinking model as the judge and disabling thinking for verdict generation. See
+`configs/local.yaml` for a complete example.
+
+Judge identity is recorded in result provenance; judge credentials are never
+written to disk.
+
+## Resuming Runs
+
+Pass `--cache` to write completed problems incrementally:
+
+```bash
 python main.py --config configs/local.yaml --cache cache/qwen3-4b-math.jsonl
 ```
 
-For SLURM users: resubmitting the same job resumes automatically as long as the cache path stays the same.
+If the run is interrupted, rerun the same command with the same cache path.
+Completed problems are skipped automatically.
 
-Cache files are resume state only. Use the completed JSON files in `results/` for analysis and reporting.
+The cache stores an identity header that includes provider, model, dataset,
+prompt shape, request overrides, generation settings, output budget, judge
+identity, and schema version. If any identity field changes, resume is refused
+instead of silently mixing incompatible results.
+
+Cache files are resume state. Use completed JSON files in `results/` for
+analysis and reporting.
 
 ## Output
 
-Results are saved to `results/` as JSON with per-problem detail and aggregate stats:
+Result files are written to `results/` by default and include secret-masked
+configuration provenance, per-problem records, and aggregate summary fields:
 
 ```json
 {
@@ -242,111 +372,79 @@ Results are saved to `results/` as JSON with per-problem detail and aggregate st
 }
 ```
 
-### Interpreting Results
-
-Each task uses its own evaluator:
-
-- Math separates extraction from scoring: a regex isolates the `<answer>` block and an **LLM judge scores it** (the judge is required; see below).
-- Coding executes generated code against test cases.
-- Science extracts and checks the final multiple-choice answer.
-
-When comparing runs, keep dataset splits and model settings consistent. For example, do not compare a full-dataset run against a Selected-subset run, and keep thinking-enabled runs separate from non-thinking runs.
-
-## Math LLM Judge (required for math)
-
-Math scoring is performed by an LLM judge — regex is used only to extract the
-`<answer>` block, which is then handed to the judge. There is **no regex-only
-math fallback**: a math run without a configured judge fails fast. Configure the
-judge in YAML or on the CLI:
-
-```yaml
-evaluator_type: math
-judge:
-  model: gpt-4o-mini
-  base_url: https://api.openai.com/v1
-  # api_key: via env JUDGE_API_KEY or OPENAI_API_KEY
-```
-
-```bash
-python main.py --config configs/openai.yaml --api-key $OPENAI_API_KEY \
-    --judge-model gpt-4o-mini --judge-base-url https://api.openai.com/v1 \
-    --judge-api-key $JUDGE_API_KEY
-```
-
-The judge accepts its own `request_overrides`, so a local thinking model can be
-used as a judge with reasoning disabled (e.g.
-`extra_body.chat_template_kwargs.enable_thinking: false`); see `configs/local.yaml`.
-The judge's identity (model + endpoint) is recorded in result provenance; its key
-is never written to disk. Coding stays code-test evaluated and science stays
-multiple-choice evaluated.
-
-> The legacy post-hoc `scripts/llm_eval.py` re-scorer is retained for
-> re-evaluating older result files, but the inline judge above is now the
-> default, required math scorer.
+When comparing runs, keep dataset split, prompt template, provider request
+shape, output budget mode, and judge settings consistent.
 
 ## Extending OckBench
 
-Providers and evaluators are resolved through registries, so you can add your
-own without editing the runner or config schema — just import a module that
-registers it.
+Providers and evaluators are resolved through registries. Add a module that
+registers your implementation, then select it with `--provider` or
+`--evaluator-type`.
 
 Custom provider:
 
 ```python
+from src.core.schemas import ModelResponse, TokenUsage
 from src.models.base import BaseModelClient
 from src.models.registry import register_provider
-from src.core.schemas import ModelResponse, TokenUsage
+
 
 @register_provider("my-provider")
 class MyClient(BaseModelClient):
-    protected_paths = ("model",)        # fields you depend on
+    protected_paths = ("model",)
     provider_name = "my-provider"
 
     def build_request(self, prompt, max_output_tokens):
         return {"model": self.model, "prompt": prompt, "budget": max_output_tokens}
 
-    async def _dispatch(self, request):  # the base owns retry; just send + parse
-        ...
-        return ModelResponse(text=..., tokens=TokenUsage(...), latency=0, model=self.model)
+    async def _dispatch(self, request):
+        return ModelResponse(
+            text="...",
+            tokens=TokenUsage(prompt_tokens=0, answer_tokens=0, reasoning_tokens=0),
+            latency=0,
+            model=self.model,
+        )
 ```
 
-Custom task/evaluator:
+Custom evaluator:
 
 ```python
-from src.evaluators.base import Evaluator, EvalResult, register_evaluator
+from src.evaluators.base import EvalResult, Evaluator, register_evaluator
+
 
 @register_evaluator("my-task")
 def build(config):
     class MyEvaluator(Evaluator):
         async def evaluate(self, problem, response):
-            return EvalResult(is_correct=..., extracted_answer=..., extraction_method="...")
+            return EvalResult(
+                is_correct=...,
+                extracted_answer=...,
+                extraction_method="...",
+            )
+
     return MyEvaluator()
 ```
 
-Then select it by name: `--provider my-provider` / `--evaluator-type my-task`.
-Validate the resolved request first with `--inspect`.
+Validate request construction before running real traffic:
 
-## Reproducibility: provenance & cache identity
+```bash
+python main.py --provider my-provider --evaluator-type my-task ... --inspect
+```
 
-Result files carry a `schema_version`, the resolved (secret-masked) config —
-including request overrides and the math judge identity — provider/model and
-dataset identity, and the normalized token breakdown.
+## Testing
 
-The `--cache` file is the single source of truth: it stores an identity header
-(provider, model, dataset+split, prompt/template, resolved request shape,
-generation settings, output budget, judge identity, schema version) plus each
-problem's full outcome (including the judge verdict). Resuming with a different
-identity is refused with a message naming what changed, so results from
-different configurations never silently merge; the results file is a pure
-aggregation of the cache.
+```bash
+uv run pytest
+```
 
 ## Contributing
 
-We welcome contributions and collaborations. Please open an issue or submit a pull request.
+Issues and pull requests are welcome. Please include the command or YAML config
+used for any benchmark behavior you are changing.
 
 ## Citation
 
-If you use OckBench in your research, please cite our paper:
+If you use OckBench in your research, please cite:
 
 ```bibtex
 @article{du2025ockbench,

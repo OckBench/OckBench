@@ -10,7 +10,7 @@ can never diverge.
 import json
 import logging
 from pathlib import Path
-from typing import List, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
 from .identity import compute_run_identity, diff_identity, identity_hash
 from .schemas import SCHEMA_VERSION, BenchmarkConfig, EvaluationResult, ExperimentSummary
@@ -81,6 +81,7 @@ class RunCache:
         self.identity_hash = ident_hash
         self._completed_ids: Set = set()
         self._results: List[EvaluationResult] = []
+        self._rejudgable_results: Dict[Any, EvaluationResult] = {}
 
     @classmethod
     def open(cls, cache_path: str, config: BenchmarkConfig) -> "RunCache":
@@ -125,14 +126,31 @@ class RunCache:
         return inst
 
     def _load(self, body_lines: List[str]) -> None:
+        latest_by_id: Dict[Any, EvaluationResult] = {}
         for r in _parse_results(body_lines):
+            latest_by_id[r.problem_id] = r
+
+        for r in latest_by_id.values():
             if not r.error:
                 self._completed_ids.add(r.problem_id)
                 self._results.append(r)
+            elif self._is_rejudgable_error(r):
+                self._rejudgable_results[r.problem_id] = r
+
+    @staticmethod
+    def _is_rejudgable_error(result: EvaluationResult) -> bool:
+        """True when generation succeeded and only evaluator/judge failed."""
+        if not result.error or not result.model_response:
+            return False
+        return result.extraction_method not in {"error", "exception"}
 
     @property
     def completed_ids(self) -> Set:
         return self._completed_ids
+
+    @property
+    def rejudgable_results(self) -> Dict[Any, EvaluationResult]:
+        return self._rejudgable_results
 
     def append(self, result: EvaluationResult) -> None:
         with open(self.path, "a", encoding="utf-8") as f:

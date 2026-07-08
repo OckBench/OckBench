@@ -3,11 +3,12 @@ import asyncio
 import logging
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from tqdm.asyncio import tqdm as atqdm
 
 from ..evaluators import get_evaluator
+from ..evaluators.base import EvalResult
 from ..loaders.base import get_loader
 from ..models import create_provider
 from ..models.base import BaseModelClient
@@ -30,6 +31,7 @@ class BenchmarkRunner:
         self.client: Optional[BaseModelClient] = None
         self.evaluator = None
         self.problems: List[Problem] = []
+        self.rejudge_items: List[tuple[Problem, EvaluationResult]] = []
 
     def _create_client(self) -> BaseModelClient:
         """Resolve and construct the provider through the registry (no if/elif)."""
@@ -65,6 +67,33 @@ class BenchmarkRunner:
             )
             return max_output
         return self.config.max_output_tokens
+
+    @staticmethod
+    def _result_from_eval(
+        problem_fields: Dict[str, Any],
+        eval_result: EvalResult,
+        *,
+        model_response: str,
+        tokens: TokenUsage,
+        latency: float,
+        finish_reason: Optional[str],
+    ) -> EvaluationResult:
+        """The single eval→result field mapping, shared by fresh runs and rejudges."""
+        return EvaluationResult(
+            **problem_fields,
+            model_response=model_response,
+            extracted_answer=eval_result.extracted_answer,
+            correct=eval_result.is_correct,
+            tokens=tokens,
+            latency=latency,
+            extraction_method=eval_result.extraction_method,
+            judge_reasoning=eval_result.judge_reasoning,
+            error=eval_result.error,
+            tests_passed=eval_result.tests_passed,
+            tests_total=eval_result.tests_total,
+            execution_error=eval_result.execution_error,
+            finish_reason=finish_reason,
+        )
 
     async def _process_single_problem(
         self,
@@ -110,16 +139,10 @@ class BenchmarkRunner:
                         # failed — record it as an error so the cache re-attempts
                         # on resume, while preserving the real model tokens.
                         logger.error(f"Evaluator error for problem {problem.id}: {eval_result.error}")
-                    result = EvaluationResult(
-                        **problem_fields,
-                        model_response=response.text, extracted_answer=eval_result.extracted_answer,
-                        correct=eval_result.is_correct, tokens=response.tokens, latency=response.latency,
-                        extraction_method=eval_result.extraction_method,
-                        judge_reasoning=eval_result.judge_reasoning,
-                        error=eval_result.error,
-                        tests_passed=eval_result.tests_passed, tests_total=eval_result.tests_total,
-                        execution_error=eval_result.execution_error,
-                        finish_reason=response.finish_reason,
+                    result = self._result_from_eval(
+                        problem_fields, eval_result,
+                        model_response=response.text, tokens=response.tokens,
+                        latency=response.latency, finish_reason=response.finish_reason,
                     )
 
                 self._append_to_cache(result)
@@ -141,18 +164,55 @@ class BenchmarkRunner:
                     pbar.update(1)
                 return result
 
+    async def _rejudge_cached_problem(
+        self,
+        problem: Problem,
+        cached: EvaluationResult,
+        semaphore: asyncio.Semaphore,
+        pbar: Optional[atqdm] = None,
+    ) -> EvaluationResult:
+        async with semaphore:
+            try:
+                eval_result = await self.evaluator.evaluate(problem, cached.model_response)
+                if eval_result.error:
+                    logger.error(f"Evaluator error for cached problem {problem.id}: {eval_result.error}")
+                result = self._result_from_eval(
+                    dict(
+                        problem_id=problem.id,
+                        question=cached.question or problem.problem,
+                        formatted_prompt=cached.formatted_prompt,
+                        ground_truth=cached.ground_truth,
+                    ),
+                    eval_result,
+                    model_response=cached.model_response, tokens=cached.tokens,
+                    latency=cached.latency, finish_reason=cached.finish_reason,
+                )
+            except Exception as e:
+                logger.error(f"Exception re-judging cached problem {problem.id}: {e}")
+                result = cached.model_copy(update={"error": str(e), "extraction_method": "rejudge_exception"})
+
+            self._append_to_cache(result)
+            if pbar:
+                pbar.update(1)
+            return result
+
     def _append_to_cache(self, result: EvaluationResult) -> None:
         if self.cache is not None:
             self.cache.append(result)
 
     async def _run_benchmark_async(self) -> List[EvaluationResult]:
         semaphore = asyncio.Semaphore(self.config.concurrency)
+        total = len(self.problems) + len(self.rejudge_items)
         pbar = atqdm(
-            total=len(self.problems),
-            desc=f"Running {self.config.model} on {len(self.problems)} problems",
+            total=total,
+            desc=f"Running {self.config.model} on {total} problems",
             unit="problem",
         )
         tasks = [self._process_single_problem(p, semaphore, pbar) for p in self.problems]
+        tasks.extend(
+            self._rejudge_cached_problem(p, cached, semaphore, pbar)
+            for p, cached in self.rejudge_items
+        )
         results = await asyncio.gather(*tasks)
         pbar.close()
         return results
@@ -192,11 +252,27 @@ class BenchmarkRunner:
             if self.cache_path:
                 self.cache = RunCache.open(self.cache_path, self.config)
                 completed_ids = self.cache.completed_ids
-                if completed_ids:
-                    self.problems = [p for p in self.problems if p.id not in completed_ids]
-                    logger.info(f"Resuming: {len(completed_ids)} cached, {len(self.problems)} remaining")
+                # No evaluator-type gate: _is_rejudgable_error is the single
+                # arbiter of "recoverable without regeneration", and only
+                # judge-backed evaluators produce rows that satisfy it.
+                rejudge_map = self.cache.rejudgable_results
+                if completed_ids or rejudge_map:
+                    remaining = []
+                    for p in self.problems:
+                        if p.id in completed_ids:
+                            continue
+                        cached = rejudge_map.get(p.id)
+                        if cached is not None:
+                            self.rejudge_items.append((p, cached))
+                        else:
+                            remaining.append(p)
+                    self.problems = remaining
+                    logger.info(
+                        f"Resuming: {len(completed_ids)} cached, "
+                        f"{len(self.rejudge_items)} judge-only, {len(self.problems)} remaining"
+                    )
 
-            if self.problems:
+            if self.problems or self.rejudge_items:
                 logger.info("Running benchmark...")
                 new_results = asyncio.run(self._run_benchmark_async())
             else:

@@ -1,5 +1,6 @@
 """AC-4: extraction separated from scoring; LLM judge is required for math."""
 import asyncio
+import json
 
 import pytest
 
@@ -129,6 +130,7 @@ def test_llm_judge_builds_request_and_parses_offline():
     assert captured["max_tokens"] == 500
     # Judge request_overrides applied (disable a local thinking model).
     assert captured["extra_body"]["chat_template_kwargs"]["enable_thinking"] is False
+    assert captured["response_format"] == {"type": "json_object"}
     # The candidate is carried in the judge prompt.
     assert "42" in captured["messages"][0]["content"]
 
@@ -136,6 +138,35 @@ def test_llm_judge_builds_request_and_parses_offline():
 def test_llm_judge_disables_sdk_retry():
     judge = LLMJudge(JudgeConfig(model="m", base_url="https://x/v1", api_key="k"))
     assert judge.client.max_retries == 0
+
+
+def test_llm_judge_disables_json_mode_when_endpoint_rejects(monkeypatch):
+    import src.evaluators.judge as judge_mod
+
+    monkeypatch.setattr(judge_mod.random, "uniform", lambda _lo, _hi: 0)
+    judge = LLMJudge(JudgeConfig(model="m", base_url="https://x/v1", api_key="k"), backoff=(0,))
+    calls = []
+
+    async def fake_create(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise RuntimeError("unsupported response_format")
+
+        class _Msg:
+            content = '{"correct": true, "extracted_answer": "6", "reasoning": "ok"}'
+
+        class _Choice:
+            message = _Msg()
+
+        class _Resp:
+            choices = [_Choice()]
+        return _Resp()
+
+    judge.client.chat.completions.create = fake_create
+    verdict = asyncio.run(judge.score(question="q", ground_truth="6", candidate="6"))
+    assert verdict.correct is True
+    assert "response_format" in calls[0]
+    assert "response_format" not in calls[1]
 
 
 @pytest.mark.parametrize("value, expected", [
@@ -167,3 +198,21 @@ def test_judge_string_false_is_not_correct():
     judge.client.chat.completions.create = fake_create
     verdict = asyncio.run(judge.score(question="q", ground_truth="6", candidate="5"))
     assert verdict.correct is False
+
+
+def test_parse_json_judgment_recovers_truncated_json():
+    # response_format=json_object + verbose reasoning can hit max_tokens, leaving
+    # the object unclosed; the verdict fields precede reasoning and must survive.
+    from src.evaluators.judge import parse_json_judgment
+    truncated = '{"correct": false, "extracted_answer": "x = m^2", "reasoning": "The student\'s answer does not ma'
+    v = parse_json_judgment(truncated)
+    assert v["correct"] == "false"
+    assert v["extracted_answer"] == "x = m^2"
+    assert v["reasoning"].endswith("[truncated]")
+
+
+def test_parse_json_judgment_still_rejects_prose():
+    from src.evaluators.judge import parse_json_judgment
+
+    with pytest.raises(json.JSONDecodeError):
+        parse_json_judgment("I'm sorry, I can't help with that.")

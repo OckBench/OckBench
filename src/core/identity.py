@@ -28,6 +28,8 @@ def compute_run_identity(config: BenchmarkConfig) -> Dict[str, Any]:
     overrides = config.request_overrides
     judge_identity = None
     if config.judge is not None:
+        from ..evaluators.judge import runtime_identity as judge_runtime_identity
+
         # Judge identity = model + endpoint (never the key); judge request shape
         # affects verdicts, so include it.
         judge_identity = {
@@ -44,6 +46,7 @@ def compute_run_identity(config: BenchmarkConfig) -> Dict[str, Any]:
                 "set": redact_override_set(config.judge.request_overrides.set),
                 "unset": list(config.judge.request_overrides.unset),
             },
+            "runtime": judge_runtime_identity(),
         }
 
     return {
