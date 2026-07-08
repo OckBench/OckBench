@@ -48,7 +48,7 @@ def test_no_removed_flags_in_configs(config_file):
 
 
 def test_documented_openai_math_command_builds_judge_offline(monkeypatch):
-    # The README "Run on OpenAI" math command must build the (required) math judge
+    # The documented OpenAI math command must build the required math judge
     # without a network call. Its judge key resolves from the exported OPENAI_API_KEY.
     def _boom(*a, **k):
         raise AssertionError("documented math command opened a socket")
@@ -66,7 +66,7 @@ def test_documented_openai_math_command_builds_judge_offline(monkeypatch):
 
 
 def test_documented_yaml_config_command_validates_via_inspect(monkeypatch):
-    # README: `python main.py --config configs/openai.yaml --api-key $OPENAI_API_KEY`
+    # Docs: `python main.py --config configs/openai.yaml --api-key $OPENAI_API_KEY`
     # must resolve and validate through the inspect path with no socket.
     def _boom(*a, **k):
         raise AssertionError("documented YAML config command opened a socket")
@@ -101,7 +101,7 @@ def test_cli_help_epilog_examples_validate(monkeypatch):
 
 
 def test_documented_custom_provider_pattern():
-    # Mirrors the README "registering a custom provider" example.
+    # Mirrors docs/extending.md custom provider example.
     name = "doc-echo-provider"
     try:
         @registry.register_provider(name)
@@ -124,7 +124,7 @@ def test_documented_custom_provider_pattern():
 
 
 def test_documented_custom_evaluator_pattern():
-    # Mirrors the README "registering a custom task/evaluator" example.
+    # Mirrors docs/extending.md custom evaluator example.
     name = "doc-exact-eval"
     try:
         @ev_base.register_evaluator(name)
