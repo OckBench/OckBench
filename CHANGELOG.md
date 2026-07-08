@@ -33,5 +33,5 @@ preserved behaviorally and fenced by golden tests.
 - The client contract is now `build_request` + `_dispatch` (the base owns retry
   and `shape_request`), replacing the old `_call_api(...)` signature.
 - Result/cache schemas changed; old result/cache files are not compatible (start
-  a fresh `--cache` path). `scripts/llm_eval.py` remains for post-hoc re-scoring
-  of older files.
+  a fresh `--cache` path). The old post-hoc LLM evaluation script has been
+  removed; math scoring now uses the inline judge only.

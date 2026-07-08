@@ -1,10 +1,9 @@
 """LLM judge for math scoring (the default, required math scorer).
 
-Ported from the former post-hoc ``scripts/llm_eval.py`` and made an inline,
-first-class scorer. The judge receives the *extracted* answer block (not the raw
-transcript) plus the question and ground truth, and returns a verdict. It is an
-OpenAI-compatible client; its SDK auto-retry is disabled and a small bounded
-retry handles transient/parse failures.
+The judge is an inline, first-class scorer. It receives the *extracted* answer
+block (not the raw transcript) plus the question and ground truth, and returns a
+verdict. It is an OpenAI-compatible client; its SDK auto-retry is disabled and a
+small bounded retry handles transient/parse failures.
 """
 import asyncio
 import json
