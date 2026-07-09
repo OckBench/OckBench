@@ -75,6 +75,7 @@ class BenchmarkConfig(BaseModel):
 
     concurrency: int = Field(5, gt=0)
     timeout: int = Field(120, gt=0)
+    wall_clock_timeout: Optional[int] = Field(None, gt=0)
     max_retries: int = Field(3, gt=0)
 
     evaluator_type: str = Field("math")

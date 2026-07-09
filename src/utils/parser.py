@@ -205,7 +205,14 @@ def create_parser() -> argparse.ArgumentParser:
         "--timeout",
         type=int,
         default=None,
-        help="Request timeout in seconds",
+        help="Provider timeout in seconds (streaming providers use this as a per-chunk read timeout)",
+    )
+    parser.add_argument(
+        "--wall-clock-timeout",
+        type=int,
+        default=None,
+        help="Optional wall-clock deadline in seconds for each request attempt. "
+             "When exceeded, the attempt is retried through --max-retries.",
     )
     parser.add_argument(
         "--max-retries",
@@ -407,6 +414,7 @@ def build_config(args: argparse.Namespace) -> Dict[str, Any]:
         "top_p": args.top_p,
         "concurrency": args.concurrency,
         "timeout": args.timeout,
+        "wall_clock_timeout": args.wall_clock_timeout,
         "max_retries": args.max_retries,
         "evaluator_type": args.evaluator_type,
         "execution_timeout": args.execution_timeout,

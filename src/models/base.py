@@ -9,9 +9,10 @@ provider implements its own retry loop, and every provider client disables its
 underlying SDK's auto-retry so attempts never stack.
 
 Connection parameters (``timeout``, ``max_retries``, ``base_url``, ``api_key``)
-are constructor arguments; generation parameters that stay constant across a run
-(``temperature``, ``top_p``, ``request_overrides``) are held on the client; only
-the per-problem ``max_output_tokens`` is passed to ``generate``.
+and the optional ``wall_clock_timeout``) are constructor arguments; generation
+parameters that stay constant across a run (``temperature``, ``top_p``,
+``request_overrides``) are held on the client; only the per-problem
+``max_output_tokens`` is passed to ``generate``.
 """
 import asyncio
 import logging
@@ -54,6 +55,7 @@ class BaseModelClient(ABC):
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         timeout: int = 120,
+        wall_clock_timeout: Optional[int] = None,
         max_retries: int = 3,
         temperature: float = 0.0,
         top_p: Optional[float] = None,
@@ -64,6 +66,7 @@ class BaseModelClient(ABC):
         self.api_key = api_key
         self.base_url = base_url
         self.timeout = timeout
+        self.wall_clock_timeout = wall_clock_timeout
         self.max_retries = max_retries
         self.temperature = temperature
         self.top_p = top_p
@@ -117,9 +120,17 @@ class BaseModelClient(ABC):
         for attempt in range(self.max_retries):
             try:
                 start_time = time.time()
-                response = await self._dispatch(request)
+                response = await self._dispatch_with_wall_clock_timeout(request)
                 response.latency = time.time() - start_time
                 return response
+            except asyncio.TimeoutError as e:
+                if self.wall_clock_timeout is not None:
+                    last_error = Exception(
+                        f"wall_clock_timeout: attempt exceeded {self.wall_clock_timeout}s"
+                    )
+                else:
+                    last_error = Exception(str(e) or type(e).__name__)
+                error_msg = str(last_error)
             except Exception as e:  # noqa: BLE001 - classified below
                 last_error = e
                 error_msg = str(e)
@@ -128,21 +139,29 @@ class BaseModelClient(ABC):
                     logger.error(f"[{self.provider_name}] non-retryable error: {error_msg}")
                     return self._create_error_response(error_msg, time.time() - start_time)
 
-                if attempt < self.max_retries - 1:
-                    wait_time = self._retry_wait_time(error_msg, attempt)
-                    logger.warning(
-                        f"[{self.provider_name}] API call failed "
-                        f"(attempt {attempt + 1}/{self.max_retries}): {error_msg}. "
-                        f"Retrying in {wait_time}s..."
-                    )
-                    await asyncio.sleep(wait_time)
-                else:
-                    logger.error(
-                        f"[{self.provider_name}] API call failed after "
-                        f"{self.max_retries} attempts: {error_msg}"
-                    )
+            if attempt < self.max_retries - 1:
+                wait_time = self._retry_wait_time(error_msg, attempt)
+                logger.warning(
+                    f"[{self.provider_name}] API call failed "
+                    f"(attempt {attempt + 1}/{self.max_retries}): {error_msg}. "
+                    f"Retrying in {wait_time}s..."
+                )
+                await asyncio.sleep(wait_time)
+            else:
+                logger.error(
+                    f"[{self.provider_name}] API call failed after "
+                    f"{self.max_retries} attempts: {error_msg}"
+                )
 
         return self._create_error_response(str(last_error), 0)
+
+    async def _dispatch_with_wall_clock_timeout(self, request: Dict[str, Any]) -> ModelResponse:
+        if self.wall_clock_timeout is None:
+            return await self._dispatch(request)
+        return await asyncio.wait_for(
+            self._dispatch(request),
+            timeout=float(self.wall_clock_timeout),
+        )
 
     def _is_non_retryable_error(self, error: Exception) -> bool:
         """Classify errors that must surface immediately without retry."""

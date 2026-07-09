@@ -8,6 +8,7 @@ import pytest
 import src.evaluators.math_eval as math_eval
 import src.models.registry as registry
 from src.core.cache import CacheIdentityMismatch, RunCache, aggregate_cache_file
+from src.core.identity import compute_run_identity
 from src.core.runner import BenchmarkRunner
 from src.core.schemas import BenchmarkConfig, JudgeConfig, ModelResponse, TokenUsage
 from src.evaluators.judge import JudgeVerdict
@@ -101,6 +102,26 @@ def test_changed_identity_refused_naming_change():
         with pytest.raises(CacheIdentityMismatch) as exc:
             RunCache.open(cache_path, _config("gemini", ds, temperature=0.7))
         assert "generation" in str(exc.value)
+
+
+def test_wall_clock_timeout_default_does_not_enter_identity():
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = _config("gemini", _dataset(tmp))
+        assert "wall_clock_timeout" not in compute_run_identity(cfg)["generation"]
+
+
+def test_wall_clock_timeout_change_refused():
+    # The optional wall-clock deadline changes retry/timeout outcomes, so a set
+    # value is part of identity. The default None is omitted to preserve old
+    # cache resume behavior.
+    with tempfile.TemporaryDirectory() as tmp:
+        cache_path = str(Path(tmp) / "c.jsonl")
+        ds = _dataset(tmp)
+        RunCache.open(cache_path, _config("gemini", ds))
+        with pytest.raises(CacheIdentityMismatch) as exc:
+            RunCache.open(cache_path, _config("gemini", ds, wall_clock_timeout=300))
+        msg = str(exc.value)
+        assert "generation" in msg and "wall_clock_timeout" in msg
 
 
 def test_invalid_config_does_not_poison_cache():

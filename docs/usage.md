@@ -134,6 +134,16 @@ python main.py --config configs/openai.yaml --api-key "$OPENAI_API_KEY" --inspec
 API keys, bearer tokens, secret headers, credentials in URLs, and judge
 credentials are masked.
 
+## Runtime Timeouts
+
+`--timeout` controls provider/socket timeouts. For streaming providers, it is a
+read timeout between chunks.
+
+Use `--wall-clock-timeout N` when you want a hard wall-clock deadline for each
+request attempt, for example on low-reasoning runs where a slow trickle should be
+retried instead of consuming the full output budget. The wall-clock timeout is
+optional and participates in cache identity when set.
+
 ## Resume Long Runs
 
 Use `--cache` to write completed problems incrementally:

@@ -41,6 +41,7 @@ class BenchmarkRunner:
             api_key=self.config.api_key,
             base_url=self.config.base_url,
             timeout=self.config.timeout,
+            wall_clock_timeout=self.config.wall_clock_timeout,
             max_retries=self.config.max_retries,
             temperature=self.config.temperature,
             top_p=self.config.top_p,

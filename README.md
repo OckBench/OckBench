@@ -117,6 +117,10 @@ python main.py --config configs/openai.yaml --api-key "$OPENAI_API_KEY" --inspec
 
 CLI flags override YAML fields.
 
+For streaming endpoints, `--timeout` is a per-read timeout. Add
+`--wall-clock-timeout N` when a single request attempt should have a hard
+wall-clock deadline and then retry.
+
 Reasoning and thinking knobs are configurable through `request_overrides`
 instead of provider-specific CLI flags. See [Configuration](docs/configuration.md)
 for examples such as OpenAI reasoning effort, Gemini thinking budget, and local

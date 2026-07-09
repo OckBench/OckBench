@@ -63,6 +63,47 @@ def test_non_retryable_error_surfaces_immediately(provider, kwargs):
     assert resp.error is not None
 
 
+def test_wall_clock_timeout_retries_exactly_max_retries():
+    client = create_provider(
+        "chat_completion",
+        model="m",
+        api_key="k",
+        base_url="https://x/v1",
+        max_retries=3,
+        wall_clock_timeout=0.001,
+    )
+    calls = {"n": 0}
+
+    async def hangs(_request):
+        calls["n"] += 1
+        await asyncio.Future()
+
+    client._dispatch = hangs
+
+    resp = asyncio.run(client.generate("hi", 100))
+    assert calls["n"] == 3
+    assert resp.error == "wall_clock_timeout: attempt exceeded 0.001s"
+    assert resp.text == ""
+
+
+def test_asyncio_timeout_without_wall_clock_keeps_generic_error():
+    client = create_provider(
+        "chat_completion",
+        model="m",
+        api_key="k",
+        base_url="https://x/v1",
+        max_retries=1,
+    )
+
+    async def timeout(_request):
+        raise asyncio.TimeoutError()
+
+    client._dispatch = timeout
+
+    resp = asyncio.run(client.generate("hi", 100))
+    assert resp.error == "TimeoutError"
+
+
 def test_chat_completion_disables_sdk_retry():
     client = create_provider("chat_completion", model="m", api_key="k", base_url="https://x/v1")
     assert client.client.max_retries == 0

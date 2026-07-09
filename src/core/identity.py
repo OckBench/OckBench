@@ -76,6 +76,10 @@ def compute_run_identity(config: BenchmarkConfig) -> Dict[str, Any]:
             "top_p": config.top_p,
             "max_output_tokens": config.max_output_tokens,
             "max_context_window": config.max_context_window,
+            **(
+                {"wall_clock_timeout": config.wall_clock_timeout}
+                if config.wall_clock_timeout is not None else {}
+            ),
         },
         "judge": judge_identity,
     }

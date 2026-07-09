@@ -67,6 +67,14 @@ def test_dataset_split_recorded():
     assert config["dataset_split"] == "Selected"
 
 
+def test_wall_clock_timeout_cli_flag():
+    config = build_config(parse_args([
+        "--model", "m", "--api-key", "k", "--base-url", "https://x/v1",
+        "--max-output-tokens", "100", "--wall-clock-timeout", "300",
+    ]))
+    assert config["wall_clock_timeout"] == 300
+
+
 # --------------------------------------------------------------------------- #
 # Env-key resolution on the CLI path (AC-4 judge key, AC-10 provider keys)
 # --------------------------------------------------------------------------- #

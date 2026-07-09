@@ -49,6 +49,19 @@ Exactly one budget mode is required:
 In request overrides, `${max_output_tokens}` is replaced at request-build time
 with the effective per-problem output budget.
 
+## Runtime Timeouts
+
+OckBench has two request timeout layers:
+
+- `timeout`: provider/socket timeout. Streaming providers use it as a read
+  timeout between chunks, so a slow stream that keeps sending bytes can continue.
+- `wall_clock_timeout`: optional total wall-clock deadline for one request
+  attempt. If an attempt exceeds it, OckBench treats that attempt as retryable
+  and continues through `max_retries`.
+
+`wall_clock_timeout` defaults to unset. When set, it is part of cache identity
+because timeout-driven retries can change outcomes.
+
 ## Request Overrides
 
 Use request overrides to place provider-specific reasoning, thinking, sampling,

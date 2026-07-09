@@ -70,8 +70,9 @@ python main.py --config configs/local.yaml --cache cache/qwen3-4b-math.jsonl
 On rerun with the same cache path, completed problems are skipped. The cache
 stores an identity header containing provider, model, dataset, prompt shape,
 request overrides, generation settings, output budget, judge identity, and
-schema version. If any identity field changes, resume is refused instead of
-mixing incompatible results.
+schema version. A configured wall-clock timeout is included because timeout
+policy can change retry outcomes. If any identity field changes, resume is
+refused instead of mixing incompatible results.
 
 Cache files are not the primary reporting artifact. Use completed JSON files in
 `results/` for analysis.
@@ -84,4 +85,5 @@ Keep these fields consistent when comparing results:
 - Prompt template and evaluator.
 - Provider and request override shape.
 - Output budget mode and size.
+- Runtime timeout policy, when configured.
 - Math judge model, endpoint, and judge request overrides.

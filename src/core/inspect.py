@@ -39,6 +39,7 @@ def build_inspection(config: BenchmarkConfig) -> Dict[str, Any]:
         api_key=config.api_key,
         base_url=config.base_url,
         timeout=config.timeout,
+        wall_clock_timeout=config.wall_clock_timeout,
         max_retries=config.max_retries,
         temperature=config.temperature,
         top_p=config.top_p,
@@ -59,6 +60,8 @@ def build_inspection(config: BenchmarkConfig) -> Dict[str, Any]:
         "api_key": MASK if config.api_key else None,
         "evaluator_type": config.evaluator_type,
         "max_output_tokens": max_output_tokens,
+        "timeout": config.timeout,
+        "wall_clock_timeout": config.wall_clock_timeout,
         "request": redact_request(request),
     }
 
