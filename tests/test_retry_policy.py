@@ -135,7 +135,7 @@ def test_raw_http_400_surfaces_immediately_for_responses_and_anthropic():
         client._http_client = fake
         if provider == "anthropic":
             async def _count(_t):
-                return 1
+                return 1, False
             client._count_tokens_exact = _count
         import asyncio as _a
         resp = _a.run(client.generate("hi", 100))

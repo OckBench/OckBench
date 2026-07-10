@@ -124,7 +124,7 @@ def test_gemini_usage_golden():
 def test_anthropic_split_golden():
     # answer = min(count_tokens(text), output); reasoning = output - answer.
     async def counter(_text):
-        return 30
+        return 30, False
     tu = to_token_usage(asyncio.run(normalize_anthropic_usage(
         prompt_tokens=5, output_tokens=50, final_text="some answer", count_tokens=counter)))
     assert (tu.prompt_tokens, tu.reasoning_tokens, tu.answer_tokens, tu.output_tokens, tu.total_tokens) \
@@ -133,7 +133,7 @@ def test_anthropic_split_golden():
 
 def test_anthropic_split_clamps_and_empty():
     async def over(_text):
-        return 999
+        return 999, False
     tu = to_token_usage(asyncio.run(normalize_anthropic_usage(
         prompt_tokens=5, output_tokens=50, final_text="x", count_tokens=over)))
     assert (tu.answer_tokens, tu.reasoning_tokens) == (50, 0)  # clamped

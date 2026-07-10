@@ -89,7 +89,9 @@ def test_result_missing_identity_fails_to_load():
 
 
 def test_token_usage_field_set_unchanged():
-    # Contract guard: the normalized token split is exactly these five fields.
+    # Contract guard: the normalized token split is exactly these five counts,
+    # plus the diagnostic estimated-split marker (never used in scoring).
     assert set(TokenUsage.model_fields) == {
         "prompt_tokens", "answer_tokens", "reasoning_tokens", "output_tokens", "total_tokens",
+        "answer_tokens_estimated",
     }

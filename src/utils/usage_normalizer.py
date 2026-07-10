@@ -14,6 +14,10 @@ output_tokens``. Some OpenAI-compatible relays report ``reasoning_tokens``
 larger than their combined output count; in that case the provider's
 ``output_tokens`` total is kept, visible answer tokens are estimated from the
 final text when available, and the remainder is assigned to reasoning.
+Whenever the answer share comes from an estimate rather than an exact provider
+count (a repaired impossible split, or the Anthropic count_tokens fallback),
+``answer_tokens_estimated`` is set so rows with estimated splits stay
+distinguishable in the cache and results.
 
 The Anthropic path is the only one that requires deriving the answer count from
 the visible text via a tokenizer; that work needs a network call, so it lives
@@ -24,7 +28,7 @@ network.
 import logging
 import math
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Mapping, Optional
+from typing import Any, Awaitable, Callable, Mapping, Optional, Tuple
 
 from ..core.schemas import TokenUsage
 
@@ -38,22 +42,24 @@ def _estimate_visible_tokens(final_text: str) -> int:
     return max(1, math.ceil(len(final_text) / 4))
 
 
-def _repair_output_split(output_tokens: int, reasoning_tokens: int, final_text: str = "") -> tuple[int, int]:
-    """Return ``(answer_tokens, reasoning_tokens)`` with no negative counts.
+def _repair_output_split(output_tokens: int, reasoning_tokens: int, final_text: str = "") -> tuple[int, int, bool]:
+    """Return ``(answer_tokens, reasoning_tokens, answer_estimated)`` with no
+    negative counts.
 
     The provider's combined output count is treated as authoritative. If the
     reported reasoning count fits inside it, keep the provider split. If it does
     not, estimate the visible-answer share from text and assign the remainder to
-    reasoning, preserving the combined output count.
+    reasoning, preserving the combined output count; ``answer_estimated`` is
+    True exactly when that estimate path was taken.
     """
     output_tokens = max(int(output_tokens or 0), 0)
     reasoning_tokens = max(int(reasoning_tokens or 0), 0)
 
     if reasoning_tokens <= output_tokens:
-        return output_tokens - reasoning_tokens, reasoning_tokens
+        return output_tokens - reasoning_tokens, reasoning_tokens, False
 
     answer_tokens = min(_estimate_visible_tokens(final_text), output_tokens)
-    return answer_tokens, output_tokens - answer_tokens
+    return answer_tokens, output_tokens - answer_tokens, True
 
 
 @dataclass
@@ -71,6 +77,10 @@ class NormalizedUsage:
     answer_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
+    # True when the answer/reasoning split rests on a tokenizer estimate
+    # instead of an exact provider count; carried into TokenUsage so estimated
+    # splits stay auditable per row.
+    answer_tokens_estimated: bool = False
     # Cache diagnostics (Anthropic). Logged only; intentionally not propagated
     # into TokenUsage / ExperimentSummary.
     cache_creation_tokens: int = 0
@@ -93,6 +103,7 @@ def to_token_usage(usage: NormalizedUsage) -> TokenUsage:
         reasoning_tokens=usage.reasoning_tokens,
         output_tokens=usage.output_tokens,
         total_tokens=usage.total_tokens,
+        answer_tokens_estimated=usage.answer_tokens_estimated,
     )
 
 
@@ -111,7 +122,7 @@ def extract_openai_usage(usage: Any, final_text: str = "") -> NormalizedUsage:
     if details is not None:
         reasoning_tokens = getattr(details, "reasoning_tokens", 0) or 0
 
-    answer_tokens, reasoning_tokens = _repair_output_split(
+    answer_tokens, reasoning_tokens, answer_estimated = _repair_output_split(
         completion_tokens, reasoning_tokens, final_text,
     )
 
@@ -121,6 +132,7 @@ def extract_openai_usage(usage: Any, final_text: str = "") -> NormalizedUsage:
         reasoning_tokens=reasoning_tokens,
         output_tokens=completion_tokens,
         total_tokens=getattr(usage, "total_tokens", 0) or 0,
+        answer_tokens_estimated=answer_estimated,
     )
 
 
@@ -141,7 +153,7 @@ def extract_responses_usage(usage: Optional[Mapping[str, Any]], final_text: str 
     if details:
         reasoning_tokens = details.get("reasoning_tokens", 0) or 0
 
-    answer_tokens, reasoning_tokens = _repair_output_split(
+    answer_tokens, reasoning_tokens, answer_estimated = _repair_output_split(
         output_tokens, reasoning_tokens, final_text,
     )
 
@@ -151,6 +163,7 @@ def extract_responses_usage(usage: Optional[Mapping[str, Any]], final_text: str 
         reasoning_tokens=reasoning_tokens,
         output_tokens=output_tokens,
         total_tokens=total_tokens,
+        answer_tokens_estimated=answer_estimated,
     )
 
 
@@ -205,7 +218,7 @@ async def normalize_anthropic_usage(
     prompt_tokens: int,
     output_tokens: int,
     final_text: str,
-    count_tokens: Callable[[str], Awaitable[int]],
+    count_tokens: Callable[[str], Awaitable[Tuple[int, bool]]],
     cache_metrics: Optional[Mapping[str, int]] = None,
 ) -> NormalizedUsage:
     """Normalize Anthropic usage, deriving the answer split via ``count_tokens``.
@@ -213,16 +226,18 @@ async def normalize_anthropic_usage(
     Anthropic reports only a combined ``output_tokens`` count, so the answer
     count is obtained by running the visible answer text through the injected
     ``count_tokens`` callback (which owns the count-tokens HTTP call and its
-    tokenizer fallback). Empty text skips the callback entirely. The answer count
-    is clamped to the reported output, and reasoning is the remainder.
+    tokenizer fallback, and reports ``(count, estimated)`` so estimate-based
+    splits stay auditable). Empty text skips the callback entirely. The answer
+    count is clamped to the reported output, and reasoning is the remainder.
 
     Cache diagnostics, when present, are carried on the result and logged here so
     cache accounting stays observable without being surfaced in ``TokenUsage``.
     """
     if final_text:
-        answer_tokens = min(await count_tokens(final_text), output_tokens)
+        counted, answer_estimated = await count_tokens(final_text)
+        answer_tokens = min(counted, output_tokens)
     else:
-        answer_tokens = 0
+        answer_tokens, answer_estimated = 0, False
     reasoning_tokens = max(output_tokens - answer_tokens, 0)
 
     metrics = cache_metrics or {}
@@ -232,6 +247,7 @@ async def normalize_anthropic_usage(
         reasoning_tokens=reasoning_tokens,
         output_tokens=output_tokens,
         total_tokens=prompt_tokens + output_tokens,
+        answer_tokens_estimated=answer_estimated,
         cache_creation_tokens=metrics.get("cache_creation_tokens", 0) or 0,
         cache_read_tokens=metrics.get("cache_read_tokens", 0) or 0,
         cache_ephemeral_5m=metrics.get("cache_ephemeral_5m", 0) or 0,

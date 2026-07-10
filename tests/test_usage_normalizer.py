@@ -165,10 +165,10 @@ def test_extract_gemini_usage_none_is_all_zero():
 # --------------------------------------------------------------------------- #
 # AC-5: async Anthropic normalization with injected callback
 # --------------------------------------------------------------------------- #
-def _make_counter(return_value, calls):
+def _make_counter(return_value, calls, estimated=False):
     async def counter(text):
         calls.append(text)
-        return return_value
+        return return_value, estimated
     return counter
 
 
@@ -183,7 +183,20 @@ def test_normalize_anthropic_usage_basic():
     assert n.output_tokens == 50
     assert n.prompt_tokens == 5
     assert n.total_tokens == 55
+    assert n.answer_tokens_estimated is False
     assert calls == ["hello"]
+
+
+def test_normalize_anthropic_usage_marks_estimated_split():
+    # When the injected counter reports an estimate (count_tokens endpoint
+    # unavailable), the flag must survive into TokenUsage for per-row audit.
+    n = asyncio.run(normalize_anthropic_usage(
+        prompt_tokens=5, output_tokens=50, final_text="hello",
+        count_tokens=_make_counter(30, [], estimated=True),
+    ))
+    assert n.answer_tokens == 30
+    assert n.answer_tokens_estimated is True
+    assert to_token_usage(n).answer_tokens_estimated is True
 
 
 def test_normalize_anthropic_usage_clamps_answer_to_output():
@@ -250,7 +263,7 @@ def test_cache_tokens_not_surfaced_in_token_usage():
     # TokenUsage exposes no cache fields at all.
     assert set(TokenUsage.model_fields) == {
         "prompt_tokens", "answer_tokens", "reasoning_tokens",
-        "output_tokens", "total_tokens",
+        "output_tokens", "total_tokens", "answer_tokens_estimated",
     }
 
 
@@ -285,6 +298,10 @@ def test_reasoning_greater_than_output_repaired_openai_with_text():
     assert n.answer_tokens == 2
     assert n.reasoning_tokens == 8
     assert n.answer_tokens + n.reasoning_tokens == n.output_tokens
+    # A repaired impossible split is an estimate; a possible one is not.
+    assert n.answer_tokens_estimated is True
+    ok = extract_openai_usage(_OpenAIUsage(completion_tokens=10, reasoning_tokens=3))
+    assert ok.answer_tokens_estimated is False
 
 
 def test_reasoning_greater_than_output_repaired_responses():

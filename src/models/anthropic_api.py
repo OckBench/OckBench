@@ -1,7 +1,7 @@
 """Anthropic Messages API client with streaming and adaptive thinking."""
 import json
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 import httpx
 
@@ -44,6 +44,12 @@ class AnthropicClient(BaseModelClient):
             "x-api-key": self.api_key or "dummy-key",
             "anthropic-version": "2023-06-01",
         }
+
+        # Anthropic-compatible relays may serve /messages but not
+        # /messages/count_tokens. Once that route returns a definitive
+        # "unsupported" status, remember it for the rest of this client's life
+        # instead of re-probing (and re-warning) on every problem.
+        self._count_tokens_supported = True
 
         # httpx does not auto-retry; BaseModelClient.generate is the sole retry owner.
         self._http_client = httpx.AsyncClient(
@@ -149,9 +155,29 @@ class AnthropicClient(BaseModelClient):
             )
             tokens = to_token_usage(normalized)
 
+            # A 200 stream can still be a degenerate non-answer (observed: a
+            # relay ends the stream as end_turn with no content blocks and zero
+            # usage). Classify empties as retryable errors so the cache
+            # re-attempts them on resume instead of recording a completed wrong
+            # answer. max_tokens exhaustion is excluded: an empty answer after
+            # spending the whole output budget is a real, scoreable outcome.
+            error = None
+            if not text:
+                if output_tokens == 0:
+                    error = (
+                        "empty_response_no_output_tokens: stream completed with no "
+                        f"visible text and zero output tokens (stop_reason={stop_reason})"
+                    )
+                elif stop_reason != "max_tokens":
+                    error = (
+                        "empty_response_reasoning_only: stream completed with reasoning "
+                        f"tokens but no visible text (stop_reason={stop_reason}, "
+                        f"output_tokens={output_tokens})"
+                    )
+
             return ModelResponse(
                 text=text, tokens=tokens, latency=0, model=model_name,
-                finish_reason=stop_reason,
+                finish_reason=stop_reason, error=error,
             )
 
         except httpx.HTTPStatusError as e:
@@ -163,26 +189,40 @@ class AnthropicClient(BaseModelClient):
             logger.error(f"Anthropic API error: {e}")
             raise
 
-    async def _count_tokens_exact(self, text: str) -> int:
-        """Return Anthropic's exact token count for ``text`` via count_tokens.
+    async def _count_tokens_exact(self, text: str) -> Tuple[int, bool]:
+        """Return ``(count, estimated)`` for ``text`` via count_tokens.
 
-        Includes a few tokens of user-message wrapping overhead (~4-6), which is
-        noise (<1%) for substantive answers and self-corrects via min(answer,
-        output) clamping for very short answers. Falls back to a tiktoken-based
-        estimate if the endpoint is unavailable.
+        ``estimated`` is False when the count came from Anthropic's exact
+        count_tokens endpoint (which includes a few tokens of user-message
+        wrapping overhead (~4-6) — noise (<1%) for substantive answers,
+        self-correcting via min(answer, output) clamping for very short ones)
+        and True when it came from the tiktoken-based fallback. A definitive
+        unsupported status (404/405/501) disables the endpoint for the rest of
+        this client's life with a single warning; transient failures fall back
+        per-call and keep probing.
         """
         if not text:
-            return 0
-        try:
-            resp = await self._http_client.post(
-                self.count_tokens_url,
-                headers=self.headers,
-                json={"model": self.model, "messages": [{"role": "user", "content": text}]},
-                timeout=30.0,
-            )
-            resp.raise_for_status()
-            return int(resp.json().get("input_tokens", 0))
-        except Exception as e:
-            logger.warning(f"count_tokens failed, falling back to tiktoken estimate: {e}")
-            from ..utils.token_counter import estimate_tokens
-            return estimate_tokens(text, self.model)
+            return 0, False
+        if self._count_tokens_supported:
+            try:
+                resp = await self._http_client.post(
+                    self.count_tokens_url,
+                    headers=self.headers,
+                    json={"model": self.model, "messages": [{"role": "user", "content": text}]},
+                    timeout=30.0,
+                )
+                resp.raise_for_status()
+                return int(resp.json().get("input_tokens", 0)), False
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code in (404, 405, 501):
+                    self._count_tokens_supported = False
+                    logger.warning(
+                        f"count_tokens endpoint unsupported (HTTP {e.response.status_code}); "
+                        "using tiktoken estimates for the answer-token split for the rest of this run"
+                    )
+                else:
+                    logger.warning(f"count_tokens failed, falling back to tiktoken estimate: {e}")
+            except Exception as e:
+                logger.warning(f"count_tokens failed, falling back to tiktoken estimate: {e}")
+        from ..utils.token_counter import estimate_tokens
+        return estimate_tokens(text, self.model), True

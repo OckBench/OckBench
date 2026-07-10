@@ -166,7 +166,7 @@ async def drive_anthropic(client, prompt="hi", max_output_tokens=100, body=None,
     client._http_client = fake
 
     async def fake_count(_text):
-        return answer_token_count
+        return answer_token_count, False
     client._count_tokens_exact = fake_count
 
     response = await client.generate(prompt, max_output_tokens)

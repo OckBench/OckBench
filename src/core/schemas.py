@@ -147,6 +147,11 @@ class TokenUsage(BaseModel):
     reasoning_tokens: int = Field(0)
     output_tokens: int = Field(0)
     total_tokens: int = Field(0)
+    # True when the answer/reasoning split rests on a tokenizer estimate rather
+    # than an exact provider count (Anthropic count_tokens fallback, or a
+    # repaired impossible relay split). Diagnostic only — never enters scoring.
+    # Additive: rows written before this field existed read back as False.
+    answer_tokens_estimated: bool = Field(False)
 
     def __init__(self, **data):
         if 'completion_tokens' in data and 'answer_tokens' not in data:
