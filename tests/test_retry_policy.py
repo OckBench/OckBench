@@ -143,19 +143,17 @@ def test_raw_http_400_surfaces_immediately_for_responses_and_anthropic():
         assert resp.error is not None and "400" in resp.error
 
 
-def test_gemini_uses_dedicated_executor_not_default():
-    # Regression: the Gemini client must NOT use the asyncio default executor
-    # (run_in_executor(None)), whose asyncio.run shutdown can hang.
+def test_gemini_uses_native_async_sdk():
+    # Regression: google-genai exposes a native async client; do not wrap the
+    # synchronous API in an executor and cap concurrency on a thread pool.
     import inspect as _i
-    from concurrent.futures import ThreadPoolExecutor
 
     from src.models.gemini_api import GeminiClient
     client = create_provider("gemini", model="g", api_key="k")
     try:
-        assert isinstance(client._executor, ThreadPoolExecutor)
         src = _i.getsource(GeminiClient._generate_content_async)
-        assert "run_in_executor(None" not in src
-        assert "self._executor" in src
+        assert "client.aio.models.generate_content" in src
+        assert "run_in_executor" not in src
     finally:
         client.close()
 

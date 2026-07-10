@@ -56,6 +56,9 @@ class AnthropicClient(BaseModelClient):
             timeout=httpx.Timeout(self.timeout, connect=30.0, read=self.timeout),
         )
 
+    async def aclose(self) -> None:
+        await self._http_client.aclose()
+
     def build_request(self, prompt: str, max_output_tokens: int) -> Dict[str, Any]:
         # display="summarized" forces thinking_delta events during reasoning so
         # the stream doesn't go silent. Summarized thinking text is not used for

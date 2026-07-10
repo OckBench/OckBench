@@ -32,6 +32,7 @@ class BenchmarkRunner:
         self.evaluator = None
         self.problems: List[Problem] = []
         self.rejudge_items: List[tuple[Problem, EvaluationResult]] = []
+        self._client_closed = False
 
     def _create_client(self) -> BaseModelClient:
         """Resolve and construct the provider through the registry (no if/elif)."""
@@ -47,6 +48,13 @@ class BenchmarkRunner:
             top_p=self.config.top_p,
             request_overrides=self.config.request_overrides,
         )
+
+    async def _run_and_close_client(self) -> List[EvaluationResult]:
+        try:
+            return await self._run_benchmark_async()
+        finally:
+            await self.client.aclose()
+            self._client_closed = True
 
     def _calculate_max_output_tokens(self, prompt: str) -> int:
         if self.config.max_context_window is not None:
@@ -275,13 +283,14 @@ class BenchmarkRunner:
 
             if self.problems or self.rejudge_items:
                 logger.info("Running benchmark...")
-                new_results = asyncio.run(self._run_benchmark_async())
+                new_results = asyncio.run(self._run_and_close_client())
             else:
                 logger.info("All problems already cached, no work to do")
                 new_results = []
         finally:
-            # Release client-owned resources (e.g. the Gemini executor).
-            if self.client is not None:
+            # Constructor/no-work fallback; active async clients are closed
+            # inside their event loop by _run_and_close_client.
+            if self.client is not None and not self._client_closed:
                 self.client.close()
 
         duration = time.time() - start_time

@@ -98,6 +98,10 @@ class BaseModelClient(ABC):
         """Release any client-owned resources. No-op by default; overridden by
         clients that own an executor or connection pool."""
 
+    async def aclose(self) -> None:
+        """Release async resources before the runner's event loop exits."""
+        self.close()
+
     # ----- shared request-shaping + retry -------------------------------- #
     def shape_request(self, prompt: str, max_output_tokens: int) -> Dict[str, Any]:
         """Build the base request then apply the user's request overrides.

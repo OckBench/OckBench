@@ -197,10 +197,12 @@ async def drive_gemini(
 ) -> Tuple[Dict[str, Any], ModelResponse]:
     captured: Dict[str, Any] = {}
 
-    def fake_generate_content(model=None, contents=None, config=None):
+    async def fake_generate_content(model=None, contents=None, config=None):
         captured.update({"model": model, "contents": contents, "config": config})
         return response if response is not None else _GeminiResponse()
 
-    client.client = SimpleNamespace(models=SimpleNamespace(generate_content=fake_generate_content))
+    client.client = SimpleNamespace(
+        aio=SimpleNamespace(models=SimpleNamespace(generate_content=fake_generate_content))
+    )
     model_response = await client.generate(prompt, max_output_tokens)
     return captured, model_response

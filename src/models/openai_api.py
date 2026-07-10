@@ -38,6 +38,9 @@ class OpenAIClient(BaseModelClient):
 
         self.client = AsyncOpenAI(**client_kwargs)
 
+    async def aclose(self) -> None:
+        await self.client.close()
+
     def build_request(self, prompt: str, max_output_tokens: int) -> Dict[str, Any]:
         request: Dict[str, Any] = {
             "model": self.model,
