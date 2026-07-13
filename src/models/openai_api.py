@@ -119,7 +119,9 @@ class OpenAIClient(BaseModelClient):
                 tokens=tokens,
                 latency=0,
                 model=model_name,
-                finish_reason=finish_reason or "stop",
+                # Provider-literal only: a stream that ends without a finish
+                # chunk stays None so audits can't mistake it for a real stop.
+                finish_reason=finish_reason,
                 error=empty_error,
             )
 
