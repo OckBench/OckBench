@@ -42,12 +42,7 @@ def test_reasoning_only_stream_without_finish_chunk_is_unknown_not_stop():
 
 def test_text_without_finish_chunk_keeps_none():
     # Success text but no terminal chunk: keep the text, don't fabricate stop.
-    chunks = [
-        _Chunk(choices=[_Choice(_Delta(content="42"))]),
-        _Chunk(usage=_Usage(prompt_tokens=5, completion_tokens=3,
-                            reasoning_tokens=0, total_tokens=8)),
-    ]
-    _, resp = _drive(chunks)
+    _, resp = _drive(openai_chunks(text="42", completion_tokens=3, total_tokens=8, finish=None))
     assert resp.text == "42"
     assert resp.error is None
     assert resp.finish_reason is None

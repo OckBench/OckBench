@@ -13,6 +13,7 @@ from src.core.runner import BenchmarkRunner
 from src.core.schemas import BenchmarkConfig, JudgeConfig, ModelResponse, TokenUsage
 from src.evaluators.judge import JudgeVerdict
 from src.models.base import BaseModelClient
+from tests.transport_fakes import EmptyStrError
 
 
 # --------------------------------------------------------------------------- #
@@ -39,7 +40,7 @@ class _ErroringJudge:
         return JudgeVerdict(correct=False, extracted_answer=None, reasoning="", error="judge timeout")
 
 
-def _register_fixed_provider(name="fake-fixed", calls=None):
+def _register_fixed_provider(name="fake-fixed", calls=None, dispatch=None):
     @registry.register_provider(name)
     class _FixedClient(BaseModelClient):
         protected_paths = ("model",)
@@ -51,6 +52,8 @@ def _register_fixed_provider(name="fake-fixed", calls=None):
         async def _dispatch(self, request):
             if calls is not None:
                 calls.append(request)
+            if dispatch is not None:
+                return await dispatch(request)
             return ModelResponse(
                 text="<answer>6</answer>",
                 tokens=TokenUsage(prompt_tokens=10, answer_tokens=5, reasoning_tokens=15,
@@ -284,23 +287,12 @@ def test_empty_exception_recorded_as_error_and_retried(monkeypatch):
     # still persist a non-empty cache error — '' is falsy, so the row would
     # otherwise be scored as an empty answer, read as completed on resume, and
     # never be re-attempted.
-    class _EmptyStrException(Exception):
-        def __str__(self):
-            return ""
-
     dispatch_calls = []
 
-    @registry.register_provider("fake-empty-exc")
-    class _RaisingClient(BaseModelClient):
-        protected_paths = ("model",)
-        provider_name = "fake-empty-exc"
+    async def _raise(_request):
+        raise EmptyStrError()
 
-        def build_request(self, prompt, max_output_tokens):
-            return {"model": self.model, "prompt": prompt}
-
-        async def _dispatch(self, request):
-            dispatch_calls.append(request)
-            raise _EmptyStrException()
+    _register_fixed_provider("fake-empty-exc", calls=dispatch_calls, dispatch=_raise)
 
     judge = _CountingJudge()
     monkeypatch.setattr(math_eval, "build_judge", lambda cfg: judge)

@@ -58,13 +58,11 @@ class OpenAIResponsesClient(BaseModelClient):
             request["temperature"] = self.temperature
         return request
 
-    #: Terminal SSE events (authoritative end-of-stream signals) and the status
-    #: each implies when the payload omits an explicit ``response.status``.
-    _TERMINAL_EVENTS = {
-        "response.completed": "completed",
-        "response.incomplete": "incomplete",
-        "response.failed": "failed",
-    }
+    #: Terminal SSE events (authoritative end-of-stream signals). When the
+    #: payload omits ``response.status``, the event's own name implies it.
+    _TERMINAL_EVENTS = frozenset({
+        "response.completed", "response.incomplete", "response.failed",
+    })
 
     async def _dispatch(self, request: Dict[str, Any]) -> ModelResponse:
         try:
@@ -77,6 +75,7 @@ class OpenAIResponsesClient(BaseModelClient):
             failed_message = None
             buffer = ""
             ended = False
+            terminal_events = self._TERMINAL_EVENTS
 
             async with self._http_client.stream(
                 "POST", self.responses_url, headers=self.headers, json=request
@@ -111,11 +110,11 @@ class OpenAIResponsesClient(BaseModelClient):
                             elif event_type == "response.reasoning_text.delta":
                                 reasoning_chars += len(d.get("delta", "") or "")
 
-                            elif event_type in self._TERMINAL_EVENTS:
+                            elif event_type in terminal_events:
                                 resp_data = d.get("response", {})
                                 model_name = resp_data.get("model", model_name)
-                                status = resp_data.get("status") or self._TERMINAL_EVENTS[event_type]
-                                usage_payload = resp_data.get("usage") or usage_payload
+                                status = resp_data.get("status") or event_type.removeprefix("response.")
+                                usage_payload = resp_data.get("usage") or {}
                                 details = resp_data.get("incomplete_details") or {}
                                 incomplete_reason = details.get("reason")
                                 err = resp_data.get("error")

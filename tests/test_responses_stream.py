@@ -14,25 +14,14 @@ the anthropic ``max_tokens`` semantics.
 import asyncio
 
 from src.models.openai_responses_api import OpenAIResponsesClient
-from tests.transport_fakes import _sse, drive_responses, responses_sse
+from tests.transport_fakes import _sse, drive_responses, responses_sse, responses_usage
 
 CLIENT_KWARGS = dict(model="m", api_key="k", base_url="https://x/v1")
 
 
-def _client(**overrides):
-    return OpenAIResponsesClient(**{**CLIENT_KWARGS, **overrides})
-
-
-def _usage(input_tokens=10, output_tokens=5, total_tokens=15, reasoning_tokens=0):
-    usage = {"input_tokens": input_tokens, "output_tokens": output_tokens,
-             "total_tokens": total_tokens}
-    if reasoning_tokens:
-        usage["output_tokens_details"] = {"reasoning_tokens": reasoning_tokens}
-    return usage
-
-
 def _drive(body):
-    return asyncio.run(drive_responses(_client(), body=body))
+    client = OpenAIResponsesClient(**CLIENT_KWARGS)
+    return asyncio.run(drive_responses(client, body=body))
 
 
 # --------------------------------------------------------------------------- #
@@ -51,7 +40,7 @@ def test_completed_then_eof_without_done_is_success():
     body = _sse([
         {"type": "response.output_text.delta", "delta": "42"},
         {"type": "response.completed",
-         "response": {"model": "m", "status": "completed", "usage": _usage()}},
+         "response": {"model": "m", "status": "completed", "usage": responses_usage()}},
     ], done=False)
     _, resp = _drive(body)
     assert resp.error is None
@@ -83,8 +72,8 @@ def test_incomplete_max_output_tokens_is_scoreable_not_error():
         {"type": "response.incomplete",
          "response": {"model": "m", "status": "incomplete",
                       "incomplete_details": {"reason": "max_output_tokens"},
-                      "usage": _usage(output_tokens=64, total_tokens=74,
-                                      reasoning_tokens=64)}},
+                      "usage": responses_usage(output_tokens=64, total_tokens=74,
+                                               reasoning_tokens=64)}},
     ], done=False)
     _, resp = _drive(body)
     assert resp.error is None
@@ -100,7 +89,7 @@ def test_incomplete_zero_output_is_retryable_error():
         {"type": "response.incomplete",
          "response": {"model": "m", "status": "incomplete",
                       "incomplete_details": {"reason": "max_output_tokens"},
-                      "usage": _usage(output_tokens=0, total_tokens=10)}},
+                      "usage": responses_usage(output_tokens=0, total_tokens=10)}},
     ])
     _, resp = _drive(body)
     assert resp.error is not None and "responses_incomplete" in resp.error
@@ -111,7 +100,7 @@ def test_incomplete_other_reason_is_retryable_error():
         {"type": "response.incomplete",
          "response": {"model": "m", "status": "incomplete",
                       "incomplete_details": {"reason": "content_filter"},
-                      "usage": _usage(output_tokens=20)}},
+                      "usage": responses_usage(output_tokens=20)}},
     ])
     _, resp = _drive(body)
     assert resp.error is not None and "content_filter" in resp.error
@@ -139,7 +128,7 @@ def test_reasoning_text_delta_classifies_reasoning_only():
         {"type": "response.reasoning_text.delta", "delta": "thinking..."},
         {"type": "response.completed",
          "response": {"model": "m", "status": "completed",
-                      "usage": _usage(output_tokens=13, total_tokens=23)}},
+                      "usage": responses_usage(output_tokens=13, total_tokens=23)}},
     ])
     _, resp = _drive(body)
     assert resp.error is not None and "empty_response_reasoning_only" in resp.error
@@ -151,7 +140,7 @@ def test_reasoning_delta_does_not_pollute_answer_text():
         {"type": "response.reasoning_text.delta", "delta": "let me think"},
         {"type": "response.output_text.delta", "delta": "42"},
         {"type": "response.completed",
-         "response": {"model": "m", "status": "completed", "usage": _usage()}},
+         "response": {"model": "m", "status": "completed", "usage": responses_usage()}},
     ])
     _, resp = _drive(body)
     assert resp.error is None

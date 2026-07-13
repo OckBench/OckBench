@@ -6,6 +6,7 @@ import pytest
 import src.models.base as base_mod
 from src.models import create_provider
 from src.models.gemini_api import _retry_disabled_http_options
+from tests.transport_fakes import EmptyStrError
 
 BUILTIN_CLIENTS = {
     "chat_completion": dict(model="m", api_key="k", base_url="https://x/v1"),
@@ -23,13 +24,6 @@ class _NonRetryable(Exception):
     def __init__(self, msg):
         super().__init__(msg)
         self.status_code = 401
-
-
-class _EmptyStrError(Exception):
-    """A retryable exception whose str() is '' (seen from SDK timeouts)."""
-
-    def __str__(self):
-        return ""
 
 
 @pytest.fixture(autouse=True)
@@ -78,11 +72,11 @@ def test_empty_str_exception_exhaustion_yields_nonempty_error(provider, kwargs):
     client = create_provider(provider, max_retries=2, **kwargs)
 
     async def failing(_request):
-        raise _EmptyStrError()
+        raise EmptyStrError()
     client._dispatch = failing
 
     resp = asyncio.run(client.generate("hi", 100))
-    assert resp.error == "_EmptyStrError"
+    assert resp.error == "EmptyStrError"
     assert resp.finish_reason == "error"
 
 

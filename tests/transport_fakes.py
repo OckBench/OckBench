@@ -12,6 +12,13 @@ from typing import Any, Dict, List, Tuple
 from src.core.schemas import ModelResponse
 
 
+class EmptyStrError(Exception):
+    """A retryable exception whose str() is '' (seen from SDK timeouts)."""
+
+    def __str__(self):
+        return ""
+
+
 # --------------------------------------------------------------------------- #
 # chat_completion (AsyncOpenAI streaming) fakes
 # --------------------------------------------------------------------------- #
@@ -132,14 +139,21 @@ def _sse(events: List[dict], done: bool = True) -> str:
     return "\n".join(lines) + "\n"
 
 
-def responses_sse(text="Hi", input_tokens=10, output_tokens=5, total_tokens=15,
-                  reasoning_tokens=0, model="m", status="completed") -> str:
+def responses_usage(input_tokens=10, output_tokens=5, total_tokens=15, reasoning_tokens=0):
     usage = {"input_tokens": input_tokens, "output_tokens": output_tokens, "total_tokens": total_tokens}
     if reasoning_tokens:
         usage["output_tokens_details"] = {"reasoning_tokens": reasoning_tokens}
+    return usage
+
+
+def responses_sse(text="Hi", input_tokens=10, output_tokens=5, total_tokens=15,
+                  reasoning_tokens=0, model="m", status="completed") -> str:
     return _sse([
         {"type": "response.output_text.delta", "delta": text},
-        {"type": "response.completed", "response": {"model": model, "status": status, "usage": usage}},
+        {"type": "response.completed", "response": {
+            "model": model, "status": status,
+            "usage": responses_usage(input_tokens, output_tokens, total_tokens, reasoning_tokens),
+        }},
     ])
 
 

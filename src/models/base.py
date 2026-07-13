@@ -102,6 +102,8 @@ class BaseModelClient(ABC):
 
         Must not implement retry; ``generate`` owns that. Must raise on a
         transport/HTTP failure so ``generate`` can classify and retry it.
+        ``finish_reason`` must be the provider's literal terminal value (or
+        ``None`` when none arrived) — never synthesize a normal stop.
         """
 
     def close(self) -> None:
