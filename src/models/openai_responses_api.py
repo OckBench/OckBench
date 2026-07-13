@@ -58,15 +58,25 @@ class OpenAIResponsesClient(BaseModelClient):
             request["temperature"] = self.temperature
         return request
 
+    #: Terminal SSE events (authoritative end-of-stream signals) and the status
+    #: each implies when the payload omits an explicit ``response.status``.
+    _TERMINAL_EVENTS = {
+        "response.completed": "completed",
+        "response.incomplete": "incomplete",
+        "response.failed": "failed",
+    }
+
     async def _dispatch(self, request: Dict[str, Any]) -> ModelResponse:
         try:
             text = ""
+            reasoning_chars = 0
             model_name = self.model
             usage_payload = {}
-            status = "completed"
+            status = None
+            incomplete_reason = None
+            failed_message = None
             buffer = ""
-            saw_done = False
-            completed_event = False
+            ended = False
 
             async with self._http_client.stream(
                 "POST", self.responses_url, headers=self.headers, json=request
@@ -86,7 +96,10 @@ class OpenAIResponsesClient(BaseModelClient):
                             continue
                         data_str = line[6:]
                         if data_str == "[DONE]":
-                            saw_done = True
+                            # Optional transport sentinel (a Chat Completions
+                            # convention some proxies append); the terminal
+                            # events below are the authoritative end signal.
+                            ended = True
                             break
                         try:
                             d = json.loads(data_str)
@@ -95,16 +108,27 @@ class OpenAIResponsesClient(BaseModelClient):
                             if event_type == "response.output_text.delta":
                                 text += d.get("delta", "")
 
-                            elif event_type == "response.completed":
-                                completed_event = True
+                            elif event_type == "response.reasoning_text.delta":
+                                reasoning_chars += len(d.get("delta", "") or "")
+
+                            elif event_type in self._TERMINAL_EVENTS:
                                 resp_data = d.get("response", {})
                                 model_name = resp_data.get("model", model_name)
-                                status = resp_data.get("status", status)
-                                usage_payload = resp_data.get("usage", {})
+                                status = resp_data.get("status") or self._TERMINAL_EVENTS[event_type]
+                                usage_payload = resp_data.get("usage") or usage_payload
+                                details = resp_data.get("incomplete_details") or {}
+                                incomplete_reason = details.get("reason")
+                                err = resp_data.get("error")
+                                if isinstance(err, dict):
+                                    failed_message = err.get("message")
+                                elif err:
+                                    failed_message = str(err)
+                                ended = True
+                                break
 
                         except json.JSONDecodeError:
                             continue
-                    if saw_done:
+                    if ended:
                         break
 
             normalized = extract_responses_usage(usage_payload, final_text=text)
@@ -112,15 +136,25 @@ class OpenAIResponsesClient(BaseModelClient):
             reasoning_tokens = normalized.reasoning_tokens
 
             error = None
-            if not saw_done:
-                error = "responses_stream_incomplete: stream ended before [DONE]"
-            elif not completed_event:
-                error = "responses_stream_incomplete: no response.completed event"
+            if status is None:
+                error = "responses_stream_incomplete: stream ended without a terminal event"
+            elif status == "failed":
+                error = f"responses_stream_failed: {failed_message or 'provider reported failure'}"
+            elif status == "incomplete":
+                if incomplete_reason == "max_output_tokens" and tokens.output_tokens > 0:
+                    # Budget exhaustion is a real, scoreable outcome (same
+                    # semantics as anthropic max_tokens): keep usage, no retry.
+                    error = None
+                else:
+                    error = (
+                        f"responses_incomplete: reason={incomplete_reason or 'unknown'} "
+                        f"(output_tokens={tokens.output_tokens})"
+                    )
             elif not text:
-                if reasoning_tokens > 0:
+                if reasoning_tokens > 0 or reasoning_chars > 0:
                     error = (
                         "empty_response_reasoning_only: responses stream completed with "
-                        f"reasoning tokens but no output text (status={status})"
+                        f"reasoning but no output text (status={status})"
                     )
                 else:
                     error = (
@@ -128,9 +162,14 @@ class OpenAIResponsesClient(BaseModelClient):
                         f"output text (status={status})"
                     )
 
+            # Keep the incomplete reason auditable on scoreable rows too.
+            finish_reason = status
+            if status == "incomplete" and incomplete_reason:
+                finish_reason = f"incomplete:{incomplete_reason}"
+
             return ModelResponse(
                 text=text, tokens=tokens, latency=0, model=model_name,
-                finish_reason=status, error=error,
+                finish_reason=finish_reason, error=error,
             )
 
         except httpx.HTTPStatusError as e:
