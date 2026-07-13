@@ -27,6 +27,16 @@ from ..utils.request_overrides import apply_request_overrides, guard_protected_p
 logger = logging.getLogger(__name__)
 
 
+def describe_error(error: Exception) -> str:
+    """Never empty: some SDK exceptions (e.g. bare timeouts) stringify to ''.
+
+    An empty error message would defeat every ``if response.error`` /
+    ``if not r.error`` truthiness check downstream (runner, cache resume) and
+    let a failed attempt score as a completed empty answer.
+    """
+    return str(error) or type(error).__name__
+
+
 def raise_status_error(status_code: int, body: str) -> None:
     """Raise a transport error carrying ``status_code`` for retry classification.
 
@@ -133,11 +143,11 @@ class BaseModelClient(ABC):
                         f"wall_clock_timeout: attempt exceeded {self.wall_clock_timeout}s"
                     )
                 else:
-                    last_error = Exception(str(e) or type(e).__name__)
+                    last_error = Exception(describe_error(e))
                 error_msg = str(last_error)
             except Exception as e:  # noqa: BLE001 - classified below
                 last_error = e
-                error_msg = str(e)
+                error_msg = describe_error(e)
 
                 if self._is_non_retryable_error(e):
                     logger.error(f"[{self.provider_name}] non-retryable error: {error_msg}")
@@ -157,7 +167,7 @@ class BaseModelClient(ABC):
                     f"{self.max_retries} attempts: {error_msg}"
                 )
 
-        return self._create_error_response(str(last_error), 0)
+        return self._create_error_response(describe_error(last_error), 0)
 
     async def _dispatch_with_wall_clock_timeout(self, request: Dict[str, Any]) -> ModelResponse:
         if self.wall_clock_timeout is None:
@@ -206,6 +216,6 @@ class BaseModelClient(ABC):
             ),
             latency=latency,
             model=self.model,
-            error=error_msg,
+            error=error_msg or "unknown_error",
             finish_reason="error",
         )

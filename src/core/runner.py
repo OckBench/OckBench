@@ -133,12 +133,17 @@ class BenchmarkRunner:
                 max_output_tokens = self._calculate_max_output_tokens(formatted_prompt)
                 response = await self.client.generate(formatted_prompt, max_output_tokens)
 
-                if response.error:
-                    logger.error(f"Error for problem {problem.id}: {response.error}")
+                # Structural check, not string truthiness: an error-shaped
+                # response (finish_reason="error") must never reach the
+                # evaluator, and the cached error must be non-empty or resume
+                # would treat the line as completed and never retry it.
+                if response.error is not None or response.finish_reason == "error":
+                    error_msg = response.error or "unknown_error: error response with empty message"
+                    logger.error(f"Error for problem {problem.id}: {error_msg}")
                     result = EvaluationResult(
                         **problem_fields,
                         model_response=response.text or "", extracted_answer=None, correct=False,
-                        tokens=response.tokens, latency=response.latency, error=response.error,
+                        tokens=response.tokens, latency=response.latency, error=error_msg,
                         extraction_method="error", finish_reason=response.finish_reason,
                     )
                 else:

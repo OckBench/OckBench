@@ -279,6 +279,52 @@ def test_judge_outage_recorded_as_error_and_retried(monkeypatch):
         registry._PROVIDER_REGISTRY.pop(provider, None)
 
 
+def test_empty_exception_recorded_as_error_and_retried(monkeypatch):
+    # O4 regression: an exception whose str() is '' exhausting all retries must
+    # still persist a non-empty cache error — '' is falsy, so the row would
+    # otherwise be scored as an empty answer, read as completed on resume, and
+    # never be re-attempted.
+    class _EmptyStrException(Exception):
+        def __str__(self):
+            return ""
+
+    dispatch_calls = []
+
+    @registry.register_provider("fake-empty-exc")
+    class _RaisingClient(BaseModelClient):
+        protected_paths = ("model",)
+        provider_name = "fake-empty-exc"
+
+        def build_request(self, prompt, max_output_tokens):
+            return {"model": self.model, "prompt": prompt}
+
+        async def _dispatch(self, request):
+            dispatch_calls.append(request)
+            raise _EmptyStrException()
+
+    judge = _CountingJudge()
+    monkeypatch.setattr(math_eval, "build_judge", lambda cfg: judge)
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            ds = _dataset(tmp)
+            cache_path = str(Path(tmp) / "c.jsonl")
+
+            exp1 = BenchmarkRunner(_config("fake-empty-exc", ds, max_retries=1),
+                                   cache_path=cache_path).run()
+            assert exp1.summary.error_count == 2
+            assert judge.calls == 0  # never scored as an answer
+            body = [json.loads(ln) for ln in Path(cache_path).read_text().splitlines()[1:] if ln.strip()]
+            assert body and all(r["error"] for r in body)
+
+            # Resume: error rows are not completed -> the model is re-attempted.
+            calls_first = len(dispatch_calls)
+            BenchmarkRunner(_config("fake-empty-exc", ds, max_retries=1),
+                            cache_path=cache_path).run()
+            assert len(dispatch_calls) > calls_first
+    finally:
+        registry._PROVIDER_REGISTRY.pop("fake-empty-exc", None)
+
+
 def test_judge_outage_resume_rejudges_without_regenerating(monkeypatch):
     class _SwitchingJudge:
         def __init__(self):

@@ -25,6 +25,13 @@ class _NonRetryable(Exception):
         self.status_code = 401
 
 
+class _EmptyStrError(Exception):
+    """A retryable exception whose str() is '' (seen from SDK timeouts)."""
+
+    def __str__(self):
+        return ""
+
+
 @pytest.fixture(autouse=True)
 def _no_sleep(monkeypatch):
     async def _instant(_seconds):
@@ -61,6 +68,22 @@ def test_non_retryable_error_surfaces_immediately(provider, kwargs):
     resp = asyncio.run(client.generate("hi", 100))
     assert calls["n"] == 1  # not retried
     assert resp.error is not None
+
+
+@pytest.mark.parametrize("provider, kwargs", BUILTIN_CLIENTS.items())
+def test_empty_str_exception_exhaustion_yields_nonempty_error(provider, kwargs):
+    # An exhausted retryable exception with str(e) == '' must not surface an
+    # empty error string: '' is falsy, so the runner would score the empty
+    # text and the cache would mark the problem completed (never retried).
+    client = create_provider(provider, max_retries=2, **kwargs)
+
+    async def failing(_request):
+        raise _EmptyStrError()
+    client._dispatch = failing
+
+    resp = asyncio.run(client.generate("hi", 100))
+    assert resp.error == "_EmptyStrError"
+    assert resp.finish_reason == "error"
 
 
 def test_wall_clock_timeout_retries_exactly_max_retries():
