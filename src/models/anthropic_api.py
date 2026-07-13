@@ -7,7 +7,7 @@ import httpx
 
 from ..core.schemas import ModelResponse
 from ..utils.usage_normalizer import normalize_anthropic_usage, to_token_usage
-from .base import BaseModelClient, raise_status_error
+from .base import BaseModelClient, classify_empty_response, raise_status_error
 from .registry import register_provider
 
 logger = logging.getLogger(__name__)
@@ -81,7 +81,7 @@ class AnthropicClient(BaseModelClient):
             cache_ephemeral_5m = 0
             cache_ephemeral_1h = 0
             model_name = self.model
-            stop_reason = "end_turn"
+            stop_reason = None
             buffer = ""
 
             async with self._http_client.stream(
@@ -160,23 +160,15 @@ class AnthropicClient(BaseModelClient):
 
             # A 200 stream can still be a degenerate non-answer (observed: a
             # relay ends the stream as end_turn with no content blocks and zero
-            # usage). Classify empties as retryable errors so the cache
-            # re-attempts them on resume instead of recording a completed wrong
-            # answer. max_tokens exhaustion is excluded: an empty answer after
-            # spending the whole output budget is a real, scoreable outcome.
-            error = None
-            if not text:
-                if output_tokens == 0:
-                    error = (
-                        "empty_response_no_output_tokens: stream completed with no "
-                        f"visible text and zero output tokens (stop_reason={stop_reason})"
-                    )
-                elif stop_reason != "max_tokens":
-                    error = (
-                        "empty_response_reasoning_only: stream completed with reasoning "
-                        f"tokens but no visible text (stop_reason={stop_reason}, "
-                        f"output_tokens={output_tokens})"
-                    )
+            # usage). Anthropic bills thinking inside output_tokens, so with an
+            # empty answer the normalized reasoning count equals output_tokens.
+            error = classify_empty_response(
+                text,
+                output_tokens=output_tokens,
+                reasoning_evidence=tokens.reasoning_tokens > 0,
+                budget_exhausted=stop_reason == "max_tokens",
+                detail=f"stop_reason={stop_reason}, output_tokens={output_tokens}",
+            )
 
             return ModelResponse(
                 text=text, tokens=tokens, latency=0, model=model_name,

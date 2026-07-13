@@ -92,7 +92,7 @@ def test_incomplete_zero_output_is_retryable_error():
                       "usage": responses_usage(output_tokens=0, total_tokens=10)}},
     ])
     _, resp = _drive(body)
-    assert resp.error is not None and "responses_incomplete" in resp.error
+    assert resp.error is not None and "empty_response_no_output_tokens" in resp.error
 
 
 def test_incomplete_other_reason_is_retryable_error():

@@ -6,7 +6,7 @@ from google import genai
 
 from ..core.schemas import ModelResponse, TokenUsage
 from ..utils.usage_normalizer import extract_gemini_usage, to_token_usage
-from .base import BaseModelClient
+from .base import BaseModelClient, classify_empty_response
 from .registry import register_provider
 
 logger = logging.getLogger(__name__)
@@ -62,9 +62,19 @@ class GeminiClient(BaseModelClient):
             tokens = self._extract_tokens(response)
             finish_reason = self._get_finish_reason(response)
 
+            # str(FinishReason.MAX_TOKENS) is "FinishReason.MAX_TOKENS" on some
+            # SDK versions and "MAX_TOKENS" on others; match by substring.
+            error = classify_empty_response(
+                text,
+                output_tokens=tokens.output_tokens,
+                reasoning_evidence=tokens.reasoning_tokens > 0,
+                budget_exhausted="MAX_TOKENS" in (finish_reason or ""),
+                detail=f"finish_reason={finish_reason or 'unknown'}",
+            )
+
             return ModelResponse(
                 text=text, tokens=tokens, latency=0,
-                model=request["model"], finish_reason=finish_reason,
+                model=request["model"], finish_reason=finish_reason, error=error,
             )
         except Exception as e:
             logger.error(f"Gemini API error: {e}", exc_info=True)

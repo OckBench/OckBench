@@ -200,10 +200,13 @@ class _GeminiUsage:
 
 
 class _GeminiResponse:
-    def __init__(self, text="Hi", usage=None):
+    def __init__(self, text="Hi", usage=None, finish_reason=None):
         self.text = text
         self.usage_metadata = usage or _GeminiUsage()
-        self.candidates = []
+        self.candidates = (
+            [SimpleNamespace(finish_reason=finish_reason, content=None)]
+            if finish_reason is not None else []
+        )
 
 
 async def drive_gemini(

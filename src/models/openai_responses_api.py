@@ -7,7 +7,7 @@ import httpx
 
 from ..core.schemas import ModelResponse
 from ..utils.usage_normalizer import extract_responses_usage, to_token_usage
-from .base import BaseModelClient, raise_status_error
+from .base import BaseModelClient, classify_empty_response, raise_status_error
 from .registry import register_provider
 
 logger = logging.getLogger(__name__)
@@ -134,32 +134,23 @@ class OpenAIResponsesClient(BaseModelClient):
             tokens = to_token_usage(normalized)
             reasoning_tokens = normalized.reasoning_tokens
 
-            error = None
             if status is None:
                 error = "responses_stream_incomplete: stream ended without a terminal event"
             elif status == "failed":
                 error = f"responses_stream_failed: {failed_message or 'provider reported failure'}"
-            elif status == "incomplete":
-                if incomplete_reason == "max_output_tokens" and tokens.output_tokens > 0:
-                    # Budget exhaustion is a real, scoreable outcome (same
-                    # semantics as anthropic max_tokens): keep usage, no retry.
-                    error = None
-                else:
-                    error = (
-                        f"responses_incomplete: reason={incomplete_reason or 'unknown'} "
-                        f"(output_tokens={tokens.output_tokens})"
-                    )
-            elif not text:
-                if reasoning_tokens > 0 or reasoning_chars > 0:
-                    error = (
-                        "empty_response_reasoning_only: responses stream completed with "
-                        f"reasoning but no output text (status={status})"
-                    )
-                else:
-                    error = (
-                        "empty_response_no_content: responses stream completed with no "
-                        f"output text (status={status})"
-                    )
+            elif status == "incomplete" and incomplete_reason != "max_output_tokens":
+                error = (
+                    f"responses_incomplete: reason={incomplete_reason or 'unknown'} "
+                    f"(output_tokens={tokens.output_tokens})"
+                )
+            else:
+                error = classify_empty_response(
+                    text,
+                    output_tokens=tokens.output_tokens,
+                    reasoning_evidence=reasoning_tokens > 0 or reasoning_chars > 0,
+                    budget_exhausted=status == "incomplete",
+                    detail=f"status={status}",
+                )
 
             # Keep the incomplete reason auditable on scoreable rows too.
             finish_reason = status

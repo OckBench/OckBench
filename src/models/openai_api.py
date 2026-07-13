@@ -7,7 +7,7 @@ from openai import AsyncOpenAI
 
 from ..core.schemas import ModelResponse, TokenUsage
 from ..utils.usage_normalizer import extract_openai_usage, to_token_usage
-from .base import BaseModelClient
+from .base import BaseModelClient, classify_empty_response
 from .registry import register_provider
 
 logger = logging.getLogger(__name__)
@@ -90,29 +90,13 @@ class OpenAIClient(BaseModelClient):
                     output_tokens=0, total_tokens=0,
                 )
 
-            # Surface empty-text outcomes as errors so --cache resume will retry
-            # them. Common on reasoning models that spend the whole budget on
-            # reasoning_content and end the stream without a content delta.
-            empty_error = None
-            if not text:
-                if finish_reason == "length":
-                    suffix = " after reasoning_content stream" if reasoning_chars else ""
-                    empty_error = (
-                        "empty_response_length_finish: finish_reason=length with no content "
-                        f"emitted{suffix} (likely reasoning consumed entire output budget)"
-                    )
-                elif tokens.reasoning_tokens > 0 or reasoning_chars > 0:
-                    empty_error = (
-                        "empty_response_reasoning_only: model emitted reasoning tokens but "
-                        f"no content (finish_reason={finish_reason or 'unknown'})"
-                    )
-                elif usage_chunk is None:
-                    empty_error = "empty_response_no_stream: no usage and no content received"
-                else:
-                    empty_error = (
-                        "empty_response_no_content: stream completed with usage but no content "
-                        f"(finish_reason={finish_reason or 'unknown'})"
-                    )
+            empty_error = classify_empty_response(
+                text,
+                output_tokens=tokens.output_tokens,
+                reasoning_evidence=tokens.reasoning_tokens > 0 or reasoning_chars > 0,
+                budget_exhausted=finish_reason == "length",
+                detail=f"finish_reason={finish_reason or 'unknown'}",
+            )
 
             return ModelResponse(
                 text=text,

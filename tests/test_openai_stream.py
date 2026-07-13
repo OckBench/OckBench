@@ -40,6 +40,34 @@ def test_reasoning_only_stream_without_finish_chunk_is_unknown_not_stop():
     assert resp.finish_reason is None
 
 
+def test_length_budget_exhaustion_is_scoreable_not_error():
+    # Unified across providers (anthropic max_tokens, responses incomplete:
+    # max_output_tokens): spending the whole budget on reasoning is a real,
+    # scoreable outcome — retrying the same budget is deterministic waste.
+    chunks = [
+        _Chunk(choices=[_Choice(_Delta(reasoning_content="thinking..."), finish_reason="length")]),
+        _Chunk(usage=_Usage(prompt_tokens=5, completion_tokens=100,
+                            reasoning_tokens=100, total_tokens=105)),
+    ]
+    _, resp = _drive(chunks)
+    assert resp.error is None
+    assert resp.text == ""
+    assert resp.finish_reason == "length"
+    assert resp.tokens.reasoning_tokens == 100
+
+
+def test_length_with_zero_output_tokens_is_still_error():
+    # Zero output tokens is the broken-relay signature regardless of the
+    # reported finish reason.
+    chunks = [
+        _Chunk(choices=[_Choice(_Delta(), finish_reason="length")]),
+        _Chunk(usage=_Usage(prompt_tokens=5, completion_tokens=0,
+                            reasoning_tokens=0, total_tokens=5)),
+    ]
+    _, resp = _drive(chunks)
+    assert resp.error is not None and "empty_response_no_output_tokens" in resp.error
+
+
 def test_text_without_finish_chunk_keeps_none():
     # Success text but no terminal chunk: keep the text, don't fabricate stop.
     _, resp = _drive(openai_chunks(text="42", completion_tokens=3, total_tokens=8, finish=None))

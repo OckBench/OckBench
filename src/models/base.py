@@ -37,6 +37,42 @@ def describe_error(error: Exception) -> str:
     return str(error) or type(error).__name__
 
 
+def classify_empty_response(
+    text: str,
+    *,
+    output_tokens: int,
+    reasoning_evidence: bool,
+    budget_exhausted: bool,
+    detail: str,
+) -> Optional[str]:
+    """The single empty-outcome policy, shared by every provider client.
+
+    Returns a retryable error string, or ``None`` when the outcome is
+    scoreable. A 200 response with no visible text is only a real result when
+    the model spent its whole output budget (retrying is deterministic waste —
+    the same budget yields the same exhaustion); every other empty is a
+    provider/relay failure that resume must re-attempt:
+
+    - zero output tokens: nothing was generated (broken-relay signature,
+      regardless of the reported finish reason);
+    - reasoning evidence (reasoning tokens or streamed reasoning text) but no
+      answer text;
+    - output tokens billed with neither answer nor reasoning.
+
+    ``detail`` carries the provider-literal finish/stop vocabulary into the
+    error message; the error codes themselves are provider-independent.
+    """
+    if text:
+        return None
+    if output_tokens <= 0:
+        return f"empty_response_no_output_tokens: no visible text and zero output tokens ({detail})"
+    if budget_exhausted:
+        return None
+    if reasoning_evidence:
+        return f"empty_response_reasoning_only: reasoning but no visible answer text ({detail})"
+    return f"empty_response_no_content: output tokens billed but no visible text ({detail})"
+
+
 def raise_status_error(status_code: int, body: str) -> None:
     """Raise a transport error carrying ``status_code`` for retry classification.
 
