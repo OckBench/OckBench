@@ -108,6 +108,67 @@ def test_extract_openai_usage_without_details():
                                           total_tokens=11))
     assert n.reasoning_tokens == 0
     assert n.answer_tokens == 9  # answer == completion when no reasoning detail
+    assert n.unattributed_tokens == 0
+
+
+def test_extract_openai_usage_hidden_total_gap_folds_into_reasoning():
+    # Regression (InfiniAI gemini-3.5-flash streaming): the relay bills hidden
+    # thinking only in the total — prompt=15, visible completion=3, total=163,
+    # no reasoning details. The 145-token gap is hidden output: it must land in
+    # output/reasoning (not vanish), with the provider's original attribution
+    # preserved for audit.
+    n = extract_openai_usage(_OpenAIUsage(prompt_tokens=15, completion_tokens=3,
+                                          total_tokens=163))
+    assert n.answer_tokens == 3          # visible answer stays provider-exact
+    assert n.reasoning_tokens == 145
+    assert n.output_tokens == 148        # total - prompt
+    assert n.total_tokens == 163
+    assert n.unattributed_tokens == 145
+    assert n.answer_tokens_estimated is False
+    assert n.prompt_tokens + n.output_tokens == n.total_tokens
+    assert n.answer_tokens + n.reasoning_tokens == n.output_tokens
+
+
+def test_extract_openai_usage_hidden_gap_with_empty_answer():
+    # The dangerous shape: finish_reason=length with no visible answer, all
+    # billed thinking hidden in the total. Normalized output must be the gap,
+    # not zero — a zero output would classify the row as a retryable broken
+    # relay and re-burn the whole budget on resume.
+    n = extract_openai_usage(_OpenAIUsage(prompt_tokens=15, completion_tokens=0,
+                                          total_tokens=163))
+    assert n.output_tokens == 148
+    assert n.reasoning_tokens == 148
+    assert n.answer_tokens == 0
+    assert n.unattributed_tokens == 148
+
+
+def test_extract_openai_usage_gap_stacks_on_reported_reasoning():
+    # Reasoning details and a hidden-total gap can coexist; the gap adds to the
+    # reported reasoning while the visible answer split stays exact.
+    n = extract_openai_usage(_OpenAIUsage(prompt_tokens=10, completion_tokens=20,
+                                          total_tokens=50, reasoning_tokens=5))
+    assert n.answer_tokens == 15         # completion - reported reasoning
+    assert n.reasoning_tokens == 25      # reported 5 + gap 20
+    assert n.output_tokens == 40
+    assert n.unattributed_tokens == 20
+
+
+def test_extract_openai_usage_negative_or_missing_total_stays_literal():
+    # A relay total smaller than prompt+completion is not the hidden-output
+    # signature; counts stay provider-literal. Same when the total is absent.
+    n = extract_openai_usage(_OpenAIUsage(prompt_tokens=10, completion_tokens=20,
+                                          total_tokens=25))
+    assert n.output_tokens == 20
+    assert n.unattributed_tokens == 0
+    m = extract_openai_usage(_OpenAIUsage(prompt_tokens=10, completion_tokens=20))
+    assert m.output_tokens == 20
+    assert m.unattributed_tokens == 0
+
+
+def test_unattributed_tokens_survive_into_token_usage():
+    n = extract_openai_usage(_OpenAIUsage(prompt_tokens=15, completion_tokens=3,
+                                          total_tokens=163))
+    assert to_token_usage(n).unattributed_tokens == 145
 
 
 # --------------------------------------------------------------------------- #
@@ -264,6 +325,7 @@ def test_cache_tokens_not_surfaced_in_token_usage():
     assert set(TokenUsage.model_fields) == {
         "prompt_tokens", "answer_tokens", "reasoning_tokens",
         "output_tokens", "total_tokens", "answer_tokens_estimated",
+        "unattributed_tokens",
     }
 
 

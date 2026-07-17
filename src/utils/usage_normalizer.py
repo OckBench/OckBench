@@ -81,6 +81,11 @@ class NormalizedUsage:
     # instead of an exact provider count; carried into TokenUsage so estimated
     # splits stay auditable per row.
     answer_tokens_estimated: bool = False
+    # Tokens present in the provider's total but attributed to neither prompt
+    # nor completion by the provider (hidden thinking billed only in the
+    # total). They are folded into output/reasoning; this count preserves the
+    # provider's original attribution for audit.
+    unattributed_tokens: int = 0
     # Cache diagnostics (Anthropic). Logged only; intentionally not propagated
     # into TokenUsage / ExperimentSummary.
     cache_creation_tokens: int = 0
@@ -104,6 +109,7 @@ def to_token_usage(usage: NormalizedUsage) -> TokenUsage:
         output_tokens=usage.output_tokens,
         total_tokens=usage.total_tokens,
         answer_tokens_estimated=usage.answer_tokens_estimated,
+        unattributed_tokens=usage.unattributed_tokens,
     )
 
 
@@ -113,26 +119,47 @@ def extract_openai_usage(usage: Any, final_text: str = "") -> NormalizedUsage:
     Reasoning tokens come from ``completion_tokens_details.reasoning_tokens`` when
     present (else zero). The combined completion count stays authoritative; an
     impossible split is repaired using ``final_text`` when available.
+
+    Some relays bill hidden thinking only in the total: ``completion_tokens``
+    covers just the visible answer and ``total - prompt - completion`` is a
+    positive remainder with no reasoning details (observed: InfiniAI
+    gemini-3.5-flash streaming, 2.7k-3.9k per row). In this single-turn
+    contract the total can only be prompt plus output, so a positive gap is
+    hidden output: it is folded into ``output_tokens``/``reasoning_tokens`` and
+    preserved as ``unattributed_tokens`` so the provider's original attribution
+    stays auditable. A missing total or a negative gap leaves every count
+    provider-literal.
     """
     prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
     completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+    total_tokens = getattr(usage, "total_tokens", 0) or 0
 
     reasoning_tokens = 0
     details = getattr(usage, "completion_tokens_details", None)
     if details is not None:
         reasoning_tokens = getattr(details, "reasoning_tokens", 0) or 0
 
+    output_tokens = completion_tokens
+    unattributed_tokens = 0
+    if total_tokens:
+        gap = total_tokens - prompt_tokens - completion_tokens
+        if gap > 0:
+            unattributed_tokens = gap
+            output_tokens += gap
+            reasoning_tokens += gap
+
     answer_tokens, reasoning_tokens, answer_estimated = _repair_output_split(
-        completion_tokens, reasoning_tokens, final_text,
+        output_tokens, reasoning_tokens, final_text,
     )
 
     return NormalizedUsage(
         prompt_tokens=prompt_tokens,
         answer_tokens=answer_tokens,
         reasoning_tokens=reasoning_tokens,
-        output_tokens=completion_tokens,
-        total_tokens=getattr(usage, "total_tokens", 0) or 0,
+        output_tokens=output_tokens,
+        total_tokens=total_tokens,
         answer_tokens_estimated=answer_estimated,
+        unattributed_tokens=unattributed_tokens,
     )
 
 

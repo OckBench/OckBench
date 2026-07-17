@@ -152,6 +152,12 @@ class TokenUsage(BaseModel):
     # repaired impossible relay split). Diagnostic only — never enters scoring.
     # Additive: rows written before this field existed read back as False.
     answer_tokens_estimated: bool = Field(False)
+    # Tokens the provider billed only in its total (attributed to neither
+    # prompt nor completion — hidden thinking on some relays). They are folded
+    # into output/reasoning at normalization; this count preserves the
+    # provider's original attribution. Diagnostic only — never enters scoring.
+    # Additive: rows written before this field existed read back as 0.
+    unattributed_tokens: int = Field(0)
 
     def __init__(self, **data):
         if 'completion_tokens' in data and 'answer_tokens' not in data:
