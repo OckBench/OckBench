@@ -25,13 +25,9 @@ def _client(**overrides):
 
 
 def _empty_sse(output_tokens, stop="end_turn", thinking_tokens=None):
-    usage = {"output_tokens": output_tokens}
-    if thinking_tokens is not None:
-        usage["output_tokens_details"] = {"thinking_tokens": thinking_tokens}
-    return _sse([
-        {"type": "message_start", "message": {"usage": {"input_tokens": 10}, "model": "claude"}},
-        {"type": "message_delta", "usage": usage, "delta": {"stop_reason": stop}},
-    ])
+    """A stream with no content block at all (text=None), not an empty delta."""
+    return anthropic_sse(text=None, output_tokens=output_tokens, stop=stop,
+                         thinking_tokens=thinking_tokens)
 
 
 # --------------------------------------------------------------------------- #

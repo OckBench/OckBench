@@ -168,14 +168,19 @@ async def drive_responses(
 
 def anthropic_sse(text="Hi", input_tokens=10, output_tokens=7, model="claude",
                   stop="end_turn", thinking_tokens=None) -> str:
+    """Canned Messages SSE stream; ``text=None`` omits the content block entirely
+    (the empty-response signature, not an empty text delta)."""
     usage = {"output_tokens": output_tokens}
     if thinking_tokens is not None:
         usage["output_tokens_details"] = {"thinking_tokens": thinking_tokens}
-    return _sse([
+    events = [
         {"type": "message_start", "message": {"usage": {"input_tokens": input_tokens}, "model": model}},
         {"type": "content_block_delta", "delta": {"type": "text_delta", "text": text}},
         {"type": "message_delta", "usage": usage, "delta": {"stop_reason": stop}},
-    ])
+    ]
+    if text is None:
+        del events[1]
+    return _sse(events)
 
 
 async def drive_anthropic(client, prompt="hi", max_output_tokens=100, body=None,

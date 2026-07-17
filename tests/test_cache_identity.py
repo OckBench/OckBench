@@ -7,10 +7,11 @@ import pytest
 
 import src.evaluators.math_eval as math_eval
 import src.models.registry as registry
-from src.core.cache import CacheIdentityMismatch, RunCache, aggregate_cache_file
+from src.core.cache import CacheIdentityMismatch, RunCache, _migrate_legacy_error, aggregate_cache_file
 from src.core.identity import compute_run_identity
 from src.core.runner import BenchmarkRunner
-from src.core.schemas import BenchmarkConfig, JudgeConfig, ModelResponse, TokenUsage
+from src.core.schemas import (BenchmarkConfig, EvaluationResult, JudgeConfig, ModelResponse,
+                              TokenUsage)
 from src.evaluators.judge import JudgeVerdict
 from src.models.base import BaseModelClient
 from tests.transport_fakes import EmptyStrError
@@ -363,7 +364,6 @@ def test_judge_outage_resume_rejudges_without_regenerating(monkeypatch):
 # Generation/evaluator error provenance (two-axis resume decisions)
 # --------------------------------------------------------------------------- #
 def _result_row(**overrides):
-    from src.core.schemas import EvaluationResult
     base = dict(problem_id="p1", question="q", ground_truth="6",
                 model_response="<answer>6</answer>", correct=False,
                 tokens=TokenUsage(), latency=0)
@@ -375,18 +375,40 @@ def test_evaluator_error_row_is_rejudgable():
     assert RunCache._is_rejudgable_error(_result_row(evaluator_error="judge 401")) is True
 
 
-def test_legacy_judge_error_row_is_still_rejudgable():
+def test_legacy_judge_error_row_migrates_and_stays_rejudgable():
     # Rows written before evaluator_error existed carry judge failures in the
-    # top-level error field; they must keep resuming judge-only.
-    row = _result_row(error="judge timeout", extraction_method="answer_block")
-    assert RunCache._is_rejudgable_error(row) is True
+    # top-level error field; the parse boundary migrates them onto the
+    # two-axis contract so they keep resuming judge-only.
+    migrated = _migrate_legacy_error(
+        _result_row(error="judge timeout", extraction_method="answer_block"))
+    assert migrated.error is None
+    assert migrated.evaluator_error == "judge timeout"
+    assert RunCache._is_rejudgable_error(migrated) is True
 
 
-def test_generation_error_rows_are_not_rejudgable():
-    assert RunCache._is_rejudgable_error(
-        _result_row(error="HTTP 500", extraction_method="error")) is False
-    assert RunCache._is_rejudgable_error(
-        _result_row(error="boom", extraction_method="exception")) is False
+def test_legacy_row_migration_survives_a_real_cache_load():
+    # File-level: a legacy-shaped line in an existing cache lands in
+    # rejudgable_results on reopen, not in completed and not regenerated.
+    with tempfile.TemporaryDirectory() as tmp:
+        cache_path = str(Path(tmp) / "c.jsonl")
+        cfg = _config("gemini", _dataset(tmp))
+        RunCache.open(cache_path, cfg)
+        legacy = _result_row(error="judge timeout", extraction_method="answer_block")
+        legacy_line = legacy.model_dump(exclude={"evaluator_error"})
+        with open(cache_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(legacy_line, default=str) + "\n")
+
+        cache = RunCache.open(cache_path, cfg)
+        assert "p1" not in cache.completed_ids
+        assert "p1" in cache.rejudgable_results
+        assert cache.rejudgable_results["p1"].evaluator_error == "judge timeout"
+
+
+def test_generation_error_rows_are_not_migrated_or_rejudgable():
+    for row in (_result_row(error="HTTP 500", extraction_method="error"),
+                _result_row(error="boom", extraction_method="exception")):
+        assert _migrate_legacy_error(row) is row
+        assert RunCache._is_rejudgable_error(row) is False
 
 
 def test_masked_budget_exhausted_row_falls_through_to_regeneration():
@@ -396,6 +418,7 @@ def test_masked_budget_exhausted_row_falls_through_to_regeneration():
     # judge-only would freeze the pollution; it must regenerate instead.
     row = _result_row(model_response="", error="Error code: 401 - invalid key",
                       extraction_method="empty_response", finish_reason="max_tokens")
+    assert _migrate_legacy_error(row) is row  # no response text -> not migrated
     assert RunCache._is_rejudgable_error(row) is False
 
 

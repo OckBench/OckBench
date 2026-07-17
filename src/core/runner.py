@@ -153,9 +153,8 @@ class BenchmarkRunner:
                 else:
                     eval_result = await self.evaluator.evaluate(problem, response.text)
                     if eval_result.error:
-                        # The model responded but the scorer (e.g. the LLM judge)
-                        # failed — record it as an error so the cache re-attempts
-                        # on resume, while preserving the real model tokens.
+                        # Recorded as evaluator_error by _result_from_eval; log it
+                        # here where the problem id is at hand.
                         logger.error(f"Evaluator error for problem {problem.id}: {eval_result.error}")
                     result = self._result_from_eval(
                         problem_fields, eval_result,
@@ -207,11 +206,8 @@ class BenchmarkRunner:
                 )
             except Exception as e:
                 logger.error(f"Exception re-judging cached problem {problem.id}: {e}")
-                # Evaluator-side provenance; also clear a legacy top-level judge
-                # error so the row cannot read as a generation failure.
                 result = cached.model_copy(update={
-                    "error": None, "evaluator_error": str(e),
-                    "extraction_method": "rejudge_exception",
+                    "evaluator_error": str(e), "extraction_method": "rejudge_exception",
                 })
 
             self._append_to_cache(result)

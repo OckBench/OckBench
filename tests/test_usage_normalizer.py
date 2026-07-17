@@ -193,6 +193,17 @@ def test_extract_responses_usage_without_details():
     assert n.answer_tokens == 12
 
 
+def test_extract_responses_usage_hidden_total_gap_folds():
+    # Same relay pathology as chat (hidden thinking billed only in the total)
+    # on the Responses usage shape: the fold is shared, not chat-only.
+    n = extract_responses_usage({"input_tokens": 15, "output_tokens": 3,
+                                 "total_tokens": 163})
+    assert n.output_tokens == 148
+    assert n.reasoning_tokens == 145
+    assert n.answer_tokens == 3
+    assert n.unattributed_tokens == 145
+
+
 # --------------------------------------------------------------------------- #
 # AC-4: Gemini extractor with fallback chains
 # --------------------------------------------------------------------------- #
@@ -215,6 +226,18 @@ def test_extract_gemini_usage_fallback_names_parse():
     assert n.answer_tokens == 13
     assert n.output_tokens == 13  # reasoning 0 + answer 13
     assert n.total_tokens == 20   # computed: 7 + 13 + 0
+
+
+def test_extract_gemini_usage_hidden_total_gap_folds():
+    # Gemini's total_token_count includes thoughts while candidates does not;
+    # a relay/SDK omitting thoughts_token_count leaves exactly the hidden-total
+    # gap, which must not vanish into reasoning=0.
+    n = extract_gemini_usage(_GeminiMetadata(
+        prompt_token_count=15, candidates_token_count=3, total_token_count=163))
+    assert n.output_tokens == 148
+    assert n.reasoning_tokens == 145
+    assert n.answer_tokens == 3
+    assert n.unattributed_tokens == 145
 
 
 def test_extract_gemini_usage_none_is_all_zero():

@@ -1,6 +1,7 @@
 """AC-4: extraction separated from scoring; LLM judge is required for math."""
 import asyncio
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -8,6 +9,11 @@ from src.core.schemas import BenchmarkConfig, JudgeConfig, Problem
 from src.evaluators import get_evaluator
 from src.evaluators.judge import JudgeVerdict, LLMJudge, _coerce_correct
 from src.evaluators.math_eval import MathEvaluator
+
+
+def _chat_response(content):
+    """A minimal non-streaming chat.completions response carrying ``content``."""
+    return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))])
 
 
 class FakeJudge:
@@ -86,16 +92,7 @@ def test_llm_judge_fails_closed_on_empty_candidate():
 
     async def fake_create(**kwargs):
         calls.append(kwargs)
-
-        class _Msg:
-            content = '{"correct": true, "extracted_answer": "F", "reasoning": "matches"}'
-
-        class _Choice:
-            message = _Msg()
-
-        class _Resp:
-            choices = [_Choice()]
-        return _Resp()
+        return _chat_response('{"correct": true, "extracted_answer": "F", "reasoning": "matches"}')
 
     judge.client.chat.completions.create = fake_create
     verdict = asyncio.run(judge.score(question="q", ground_truth="F", candidate="  \n "))
@@ -157,16 +154,7 @@ def test_llm_judge_builds_request_and_parses_offline():
 
     async def fake_create(**kwargs):
         captured.update(kwargs)
-
-        class _Msg:
-            content = '{"correct": true, "extracted_answer": "42", "reasoning": "match"}'
-
-        class _Choice:
-            message = _Msg()
-
-        class _Resp:
-            choices = [_Choice()]
-        return _Resp()
+        return _chat_response('{"correct": true, "extracted_answer": "42", "reasoning": "match"}')
 
     judge.client.chat.completions.create = fake_create
     verdict = asyncio.run(judge.score(question="q", ground_truth="42", candidate="42"))
@@ -197,16 +185,7 @@ def test_llm_judge_disables_json_mode_when_endpoint_rejects(monkeypatch):
         calls.append(kwargs)
         if len(calls) == 1:
             raise RuntimeError("unsupported response_format")
-
-        class _Msg:
-            content = '{"correct": true, "extracted_answer": "6", "reasoning": "ok"}'
-
-        class _Choice:
-            message = _Msg()
-
-        class _Resp:
-            choices = [_Choice()]
-        return _Resp()
+        return _chat_response('{"correct": true, "extracted_answer": "6", "reasoning": "ok"}')
 
     judge.client.chat.completions.create = fake_create
     verdict = asyncio.run(judge.score(question="q", ground_truth="6", candidate="6"))
@@ -231,15 +210,7 @@ def test_judge_string_false_is_not_correct():
     judge = LLMJudge(JudgeConfig(model="m", base_url="https://x/v1", api_key="k"))
 
     async def fake_create(**kwargs):
-        class _Msg:
-            content = '{"correct": "false", "extracted_answer": "5", "reasoning": "wrong"}'
-
-        class _Choice:
-            message = _Msg()
-
-        class _Resp:
-            choices = [_Choice()]
-        return _Resp()
+        return _chat_response('{"correct": "false", "extracted_answer": "5", "reasoning": "wrong"}')
 
     judge.client.chat.completions.create = fake_create
     verdict = asyncio.run(judge.score(question="q", ground_truth="6", candidate="5"))

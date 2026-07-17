@@ -43,6 +43,27 @@ def _estimate_visible_tokens(final_text: str) -> int:
     return max(1, math.ceil(len(final_text) / 4))
 
 
+def _fold_hidden_total_gap(
+    prompt_tokens: int, output_tokens: int, reasoning_tokens: int, total_tokens: int,
+) -> tuple[int, int, int]:
+    """Return ``(output_tokens, reasoning_tokens, unattributed_tokens)`` with any
+    hidden-total gap folded in.
+
+    Some relays bill hidden thinking only in the total: prompt and output cover
+    the visible exchange while ``total - prompt - output`` is a positive
+    remainder (observed: InfiniAI gemini-3.5-flash streaming, 2.7k-3.9k per
+    row). In this single-turn contract the total can only be prompt plus
+    output, so a positive gap is hidden output: fold it into output/reasoning
+    and report it as ``unattributed_tokens`` so the provider's original
+    attribution stays auditable. A missing total or a negative gap leaves the
+    counts provider-literal.
+    """
+    gap = total_tokens - prompt_tokens - output_tokens
+    if gap <= 0:
+        return output_tokens, reasoning_tokens, 0
+    return output_tokens + gap, reasoning_tokens + gap, gap
+
+
 def _repair_output_split(output_tokens: int, reasoning_tokens: int, final_text: str = "") -> tuple[int, int, bool]:
     """Return ``(answer_tokens, reasoning_tokens, answer_estimated)`` with no
     negative counts.
@@ -119,17 +140,8 @@ def extract_openai_usage(usage: Any, final_text: str = "") -> NormalizedUsage:
 
     Reasoning tokens come from ``completion_tokens_details.reasoning_tokens`` when
     present (else zero). The combined completion count stays authoritative; an
-    impossible split is repaired using ``final_text`` when available.
-
-    Some relays bill hidden thinking only in the total: ``completion_tokens``
-    covers just the visible answer and ``total - prompt - completion`` is a
-    positive remainder with no reasoning details (observed: InfiniAI
-    gemini-3.5-flash streaming, 2.7k-3.9k per row). In this single-turn
-    contract the total can only be prompt plus output, so a positive gap is
-    hidden output: it is folded into ``output_tokens``/``reasoning_tokens`` and
-    preserved as ``unattributed_tokens`` so the provider's original attribution
-    stays auditable. A missing total or a negative gap leaves every count
-    provider-literal.
+    impossible split is repaired using ``final_text`` when available, and a
+    hidden-total gap is folded in per ``_fold_hidden_total_gap``.
     """
     prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
     completion_tokens = getattr(usage, "completion_tokens", 0) or 0
@@ -140,14 +152,9 @@ def extract_openai_usage(usage: Any, final_text: str = "") -> NormalizedUsage:
     if details is not None:
         reasoning_tokens = getattr(details, "reasoning_tokens", 0) or 0
 
-    output_tokens = completion_tokens
-    unattributed_tokens = 0
-    if total_tokens:
-        gap = total_tokens - prompt_tokens - completion_tokens
-        if gap > 0:
-            unattributed_tokens = gap
-            output_tokens += gap
-            reasoning_tokens += gap
+    output_tokens, reasoning_tokens, unattributed_tokens = _fold_hidden_total_gap(
+        prompt_tokens, completion_tokens, reasoning_tokens, total_tokens,
+    )
 
     answer_tokens, reasoning_tokens, answer_estimated = _repair_output_split(
         output_tokens, reasoning_tokens, final_text,
@@ -169,7 +176,8 @@ def extract_responses_usage(usage: Optional[Mapping[str, Any]], final_text: str 
 
     Reasoning tokens come from ``output_tokens_details.reasoning_tokens`` when
     present (else zero). The combined output count stays authoritative; an
-    impossible split is repaired using ``final_text`` when available.
+    impossible split is repaired using ``final_text`` when available, and a
+    hidden-total gap is folded in per ``_fold_hidden_total_gap``.
     """
     usage = usage or {}
     prompt_tokens = usage.get("input_tokens", 0) or 0
@@ -180,6 +188,10 @@ def extract_responses_usage(usage: Optional[Mapping[str, Any]], final_text: str 
     details = usage.get("output_tokens_details") or {}
     if details:
         reasoning_tokens = details.get("reasoning_tokens", 0) or 0
+
+    output_tokens, reasoning_tokens, unattributed_tokens = _fold_hidden_total_gap(
+        prompt_tokens, output_tokens, reasoning_tokens, total_tokens,
+    )
 
     answer_tokens, reasoning_tokens, answer_estimated = _repair_output_split(
         output_tokens, reasoning_tokens, final_text,
@@ -192,6 +204,7 @@ def extract_responses_usage(usage: Optional[Mapping[str, Any]], final_text: str 
         output_tokens=output_tokens,
         total_tokens=total_tokens,
         answer_tokens_estimated=answer_estimated,
+        unattributed_tokens=unattributed_tokens,
     )
 
 
@@ -201,7 +214,10 @@ def extract_gemini_usage(metadata: Any) -> NormalizedUsage:
     The primary field name wins; a fallback name is consulted only when the
     primary value is falsy. Output tokens are reasoning plus answer (Gemini does
     not report a combined output count), and the total falls back to the sum when
-    not reported directly. ``None`` metadata yields an all-zero result.
+    not reported directly. A reported total larger than prompt plus output is
+    folded in per ``_fold_hidden_total_gap`` (Gemini's total includes thoughts,
+    so a relay that omits ``thoughts_token_count`` leaves exactly this gap).
+    ``None`` metadata yields an all-zero result.
     """
     if metadata is None:
         return NormalizedUsage()
@@ -232,12 +248,17 @@ def extract_gemini_usage(metadata: Any) -> NormalizedUsage:
     if not total_tokens:
         total_tokens = prompt_tokens + answer_tokens + reasoning_tokens
 
+    output_tokens, reasoning_tokens, unattributed_tokens = _fold_hidden_total_gap(
+        prompt_tokens, output_tokens, reasoning_tokens, total_tokens,
+    )
+
     return NormalizedUsage(
         prompt_tokens=prompt_tokens,
         answer_tokens=answer_tokens,
         reasoning_tokens=reasoning_tokens,
         output_tokens=output_tokens,
         total_tokens=total_tokens,
+        unattributed_tokens=unattributed_tokens,
     )
 
 

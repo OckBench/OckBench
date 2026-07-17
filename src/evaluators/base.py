@@ -23,8 +23,9 @@ class EvalResult:
     judge_reasoning: Optional[str] = None
     # Scoring-infrastructure failure (e.g. an LLM-judge outage), distinct from a
     # legitimate wrong answer. When set, the runner records it as
-    # EvaluationResult.error so the cache re-attempts the problem on resume rather
-    # than freezing a spurious incorrect verdict.
+    # EvaluationResult.evaluator_error — separate from the generation-side
+    # error — so a resume re-judges the cached response rather than freezing a
+    # spurious incorrect verdict or regenerating a perfectly good response.
     error: Optional[str] = None
     tests_passed: Optional[int] = None
     tests_total: Optional[int] = None

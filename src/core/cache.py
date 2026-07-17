@@ -42,11 +42,28 @@ def _dedupe_latest(results: List[EvaluationResult]) -> List[EvaluationResult]:
     return list(by_id.values())
 
 
+def _migrate_legacy_error(result: EvaluationResult) -> EvaluationResult:
+    """Move a legacy judge failure from ``error`` into ``evaluator_error``.
+
+    Rows written before ``evaluator_error`` existed carry evaluator/judge
+    failures in the top-level ``error`` field, distinguishable from generation
+    failures only by ``extraction_method``. Migrating them here — the single
+    parse boundary shared by resume and aggregation — keeps that legacy
+    knowledge out of every downstream consumer: results files honor the
+    "error is generation-side only" contract, and the rejudgable predicate
+    stays a pure two-axis rule.
+    """
+    if (result.error and not result.evaluator_error and result.model_response
+            and result.extraction_method not in {"error", "exception"}):
+        return result.model_copy(update={"error": None, "evaluator_error": result.error})
+    return result
+
+
 def _parse_results(lines: List[str]) -> List[EvaluationResult]:
     results: List[EvaluationResult] = []
     for line_num, line in enumerate(lines, 1):
         try:
-            results.append(EvaluationResult(**json.loads(line)))
+            results.append(_migrate_legacy_error(EvaluationResult(**json.loads(line))))
         except Exception as e:
             logger.warning(f"Cache result line {line_num}: failed to parse, skipping: {e}")
     return results
@@ -142,16 +159,11 @@ class RunCache:
         """True when generation succeeded and only the evaluator/judge failed.
 
         Anything else — a generation error, or no cached response text to
-        re-score — falls through to full regeneration.
+        re-score — falls through to full regeneration. Legacy rows arrive here
+        already migrated onto the two-axis contract (``_migrate_legacy_error``).
         """
-        if not result.model_response:
-            return False
-        if result.evaluator_error and not result.error:
-            return True
-        # Legacy rows (written before evaluator_error existed) carry judge
-        # failures in the top-level error field; extraction_method is what
-        # distinguishes them from generation failures there.
-        return bool(result.error) and result.extraction_method not in {"error", "exception"}
+        return (bool(result.evaluator_error) and not result.error
+                and bool(result.model_response))
 
     @property
     def completed_ids(self) -> Set:
