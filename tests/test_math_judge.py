@@ -60,6 +60,52 @@ def test_math_judge_verdict_is_authoritative():
     assert result.is_correct is False
 
 
+@pytest.mark.parametrize("response", ["", "   \n\t  "])
+def test_empty_response_never_reaches_judge(response):
+    # Regression (HLE_Math-240): a budget-exhausted generation with no visible
+    # answer went to the judge, whose prompt embeds the ground truth ("F"); the
+    # judge hallucinated a match and the blank row was scored correct. An empty
+    # response must short-circuit to a scoreable wrong answer without any judge
+    # call, regardless of how eager the judge is to say "correct".
+    judge = FakeJudge(correct=True)
+    result = asyncio.run(MathEvaluator(judge).evaluate(_problem("F"), response))
+
+    assert judge.calls == []  # judge never invoked
+    assert result.is_correct is False
+    assert result.extracted_answer is None  # ground truth cannot leak in
+    assert result.extraction_method == "empty_response"
+    # Scoreable outcome, not an infrastructure error: resume must not retry it.
+    assert result.error is None
+
+
+def test_llm_judge_fails_closed_on_empty_candidate():
+    # Second line of defense inside the judge itself: even if a caller passes a
+    # blank candidate, no LLM call is made and the verdict is incorrect.
+    judge = LLMJudge(JudgeConfig(model="m", base_url="https://x/v1", api_key="k"))
+    calls = []
+
+    async def fake_create(**kwargs):
+        calls.append(kwargs)
+
+        class _Msg:
+            content = '{"correct": true, "extracted_answer": "F", "reasoning": "matches"}'
+
+        class _Choice:
+            message = _Msg()
+
+        class _Resp:
+            choices = [_Choice()]
+        return _Resp()
+
+    judge.client.chat.completions.create = fake_create
+    verdict = asyncio.run(judge.score(question="q", ground_truth="F", candidate="  \n "))
+
+    assert calls == []
+    assert verdict.correct is False
+    assert verdict.extracted_answer is None
+    assert verdict.error is None
+
+
 def test_math_falls_back_to_full_response_only_when_no_block():
     judge = FakeJudge(correct=True)
     ev = MathEvaluator(judge)

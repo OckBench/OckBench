@@ -194,6 +194,17 @@ class LLMJudge:
         return apply_request_overrides(request, self.config.request_overrides, {})
 
     async def score(self, *, question: str, ground_truth: Any, candidate: str) -> JudgeVerdict:
+        # Fail closed on a blank candidate instead of asking the LLM to grade
+        # nothing: the prompt embeds the ground truth, so a graded blank can
+        # come back as a hallucinated match. Callers normally short-circuit
+        # empty responses before reaching the judge; this is the last line of
+        # defense for any path that doesn't.
+        if not candidate or not candidate.strip():
+            return JudgeVerdict(
+                correct=False, extracted_answer=None,
+                reasoning="empty candidate: judged incorrect without an LLM call",
+            )
+
         prompt = JUDGE_PROMPT_TEMPLATE.format(
             question=question, ground_truth=ground_truth, candidate=candidate,
         )

@@ -20,6 +20,20 @@ class MathEvaluator(Evaluator):
 
     async def evaluate(self, problem, response: str) -> EvalResult:
         extracted, method = extract_answer_block(response)
+
+        # An empty response is a scoreable wrong answer that must never reach
+        # the judge: the judge prompt embeds the ground truth, and an LLM asked
+        # to grade a blank answer can hallucinate a match, copying the ground
+        # truth into extracted_answer and marking it correct (observed:
+        # blank+correct rows on budget-exhausted 128k-token generations).
+        if method == "empty_response":
+            return EvalResult(
+                is_correct=False,
+                extracted_answer=None,
+                extraction_method=method,
+                judge_reasoning="empty response: judged incorrect without invoking the LLM judge",
+            )
+
         # Hand the isolated block to the judge when present; only fall back to
         # the whole response when no block was emitted.
         candidate = extracted if extracted is not None else response
