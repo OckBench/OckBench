@@ -112,7 +112,7 @@ def test_extract_openai_usage_without_details():
 
 
 def test_extract_openai_usage_hidden_total_gap_folds_into_reasoning():
-    # Regression (InfiniAI gemini-3.5-flash streaming): the relay bills hidden
+    # Regression (relayed gemini-3.5-flash streaming): the relay bills hidden
     # thinking only in the total — prompt=15, visible completion=3, total=163,
     # no reasoning details. The 145-token gap is hidden output: it must land in
     # output/reasoning (not vanish), with the provider's original attribution

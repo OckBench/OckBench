@@ -4,7 +4,7 @@ Terminal events (``response.completed`` / ``response.incomplete`` /
 ``response.failed``) are the authoritative end-of-stream signal; the ``[DONE]``
 sentinel is an optional transport convention some proxies append. A provider
 that sends ``response.completed`` and then closes the connection (observed on
-InfiniAI) is a success, not a transport error — only a stream that ends with no
+a relay) is a success, not a transport error — only a stream that ends with no
 terminal event at all is ``responses_stream_incomplete``.
 
 ``response.incomplete`` keeps its usage/status/reason: budget exhaustion
@@ -35,8 +35,8 @@ def test_normal_stream_with_done_sentinel_is_success():
 
 
 def test_completed_then_eof_without_done_is_success():
-    # The InfiniAI signature: a full response.completed (answer + usage), then
-    # EOF with no [DONE]. Must not be recorded as transport-incomplete.
+    # The observed relay signature: a full response.completed (answer + usage),
+    # then EOF with no [DONE]. Must not be recorded as transport-incomplete.
     body = _sse([
         {"type": "response.output_text.delta", "delta": "42"},
         {"type": "response.completed",

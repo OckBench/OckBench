@@ -57,7 +57,7 @@ def test_length_budget_exhaustion_is_scoreable_not_error():
 
 
 def test_hidden_total_gap_length_empty_answer_is_scoreable():
-    # Regression (InfiniAI gemini-3.5-flash): budget exhaustion where all the
+    # Regression (relayed gemini-3.5-flash): budget exhaustion where all the
     # spent thinking is hidden in the total (completion=0, total-prompt-
     # completion positive). Before the gap fold, normalized output was 0 and
     # the row was misclassified as retryable empty_response_no_output_tokens,

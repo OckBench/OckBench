@@ -51,7 +51,7 @@ def _fold_hidden_total_gap(
 
     Some relays bill hidden thinking only in the total: prompt and output cover
     the visible exchange while ``total - prompt - output`` is a positive
-    remainder (observed: InfiniAI gemini-3.5-flash streaming, 2.7k-3.9k per
+    remainder (observed: relayed gemini-3.5-flash streaming, 2.7k-3.9k per
     row). In this single-turn contract the total can only be prompt plus
     output, so a positive gap is hidden output: fold it into output/reasoning
     and report it as ``unattributed_tokens`` so the provider's original

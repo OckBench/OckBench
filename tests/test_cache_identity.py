@@ -423,9 +423,9 @@ def test_masked_budget_exhausted_row_falls_through_to_regeneration():
 
 
 def test_judge_outage_lands_in_evaluator_error_preserving_finish_reason(monkeypatch):
-    # O12 core: an evaluator failure must not overwrite the generation
-    # terminal state — finish_reason/tokens stay authoritative on the row and
-    # resume re-judges without regenerating once the judge recovers.
+    # An evaluator failure must not overwrite the generation terminal state —
+    # finish_reason/tokens stay authoritative on the row and resume re-judges
+    # without regenerating once the judge recovers.
     async def _capped(_request):
         return ModelResponse(
             text="partial <answer>6</answer>",
@@ -461,7 +461,8 @@ def test_judge_outage_lands_in_evaluator_error_preserving_finish_reason(monkeypa
 
 
 def test_empty_budget_exhausted_row_completes_without_judge(monkeypatch):
-    # The full O12 incident shape, post empty-response short-circuit: an empty
+    # The full masked-cap-hit incident shape, post empty-response short-circuit:
+    # an empty
     # budget-exhausted generation is a scoreable wrong answer. The judge (here
     # a permanently failing one) is never consulted, so its outage cannot
     # pollute the row, and resume treats the problem as completed.
