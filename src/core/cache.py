@@ -131,7 +131,7 @@ class RunCache:
             latest_by_id[r.problem_id] = r
 
         for r in latest_by_id.values():
-            if not r.error:
+            if not r.error and not r.evaluator_error:
                 self._completed_ids.add(r.problem_id)
                 self._results.append(r)
             elif self._is_rejudgable_error(r):
@@ -139,10 +139,19 @@ class RunCache:
 
     @staticmethod
     def _is_rejudgable_error(result: EvaluationResult) -> bool:
-        """True when generation succeeded and only evaluator/judge failed."""
-        if not result.error or not result.model_response:
+        """True when generation succeeded and only the evaluator/judge failed.
+
+        Anything else — a generation error, or no cached response text to
+        re-score — falls through to full regeneration.
+        """
+        if not result.model_response:
             return False
-        return result.extraction_method not in {"error", "exception"}
+        if result.evaluator_error and not result.error:
+            return True
+        # Legacy rows (written before evaluator_error existed) carry judge
+        # failures in the top-level error field; extraction_method is what
+        # distinguishes them from generation failures there.
+        return bool(result.error) and result.extraction_method not in {"error", "exception"}
 
     @property
     def completed_ids(self) -> Set:

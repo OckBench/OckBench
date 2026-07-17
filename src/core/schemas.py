@@ -192,7 +192,14 @@ class EvaluationResult(BaseModel):
     tokens: TokenUsage = Field(...)
     latency: float = Field(...)
 
+    # Generation-side failure (provider/transport). Never carries evaluator
+    # failures: a judge outage must not overwrite the generation terminal
+    # state (finish_reason/tokens) that recovery decisions key on.
     error: Optional[str] = Field(None)
+    # Evaluator/judge-side failure with a successful generation. Additive:
+    # rows written before this field existed carry judge failures in `error`
+    # and read back as None here; resume handles both shapes.
+    evaluator_error: Optional[str] = Field(None)
     extraction_method: Optional[str] = Field(None)
     finish_reason: Optional[str] = Field(None)
 

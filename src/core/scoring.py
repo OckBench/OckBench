@@ -50,7 +50,7 @@ def summarize(results: List[EvaluationResult], duration: float) -> ExperimentSum
     avg_tokens = total_tokens / total_problems if total_problems > 0 else 0
     avg_latency = sum(r.latency for r in results) / total_problems if total_problems > 0 else 0
 
-    error_count = sum(1 for r in results if r.error)
+    error_count = sum(1 for r in results if r.error or r.evaluator_error)
     score = ock_score(accuracy, avg_tokens)
 
     return ExperimentSummary(

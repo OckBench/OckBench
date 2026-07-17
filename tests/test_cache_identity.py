@@ -270,7 +270,10 @@ def test_judge_outage_recorded_as_error_and_retried(monkeypatch):
 
             assert exp.summary.error_count == 2          # both judge-outages -> errors
             assert exp.summary.correct_count == 0
-            assert all(r.error for r in exp.results)      # not silent correct=False
+            # Evaluator-side provenance: not a silent correct=False, and not a
+            # fake generation failure either.
+            assert all(r.evaluator_error for r in exp.results)
+            assert all(r.error is None for r in exp.results)
             assert exp.results[0].model_response == "<answer>6</answer>"  # model tokens/text preserved
             calls_first = judge.calls
             assert calls_first == 2
@@ -352,6 +355,124 @@ def test_judge_outage_resume_rejudges_without_regenerating(monkeypatch):
             assert exp2.summary.error_count == 0
             assert exp2.summary.correct_count == 1
             assert exp2.summary.total_tokens == exp1.summary.total_tokens
+    finally:
+        registry._PROVIDER_REGISTRY.pop(provider, None)
+
+
+# --------------------------------------------------------------------------- #
+# Generation/evaluator error provenance (two-axis resume decisions)
+# --------------------------------------------------------------------------- #
+def _result_row(**overrides):
+    from src.core.schemas import EvaluationResult
+    base = dict(problem_id="p1", question="q", ground_truth="6",
+                model_response="<answer>6</answer>", correct=False,
+                tokens=TokenUsage(), latency=0)
+    base.update(overrides)
+    return EvaluationResult(**base)
+
+
+def test_evaluator_error_row_is_rejudgable():
+    assert RunCache._is_rejudgable_error(_result_row(evaluator_error="judge 401")) is True
+
+
+def test_legacy_judge_error_row_is_still_rejudgable():
+    # Rows written before evaluator_error existed carry judge failures in the
+    # top-level error field; they must keep resuming judge-only.
+    row = _result_row(error="judge timeout", extraction_method="answer_block")
+    assert RunCache._is_rejudgable_error(row) is True
+
+
+def test_generation_error_rows_are_not_rejudgable():
+    assert RunCache._is_rejudgable_error(
+        _result_row(error="HTTP 500", extraction_method="error")) is False
+    assert RunCache._is_rejudgable_error(
+        _result_row(error="boom", extraction_method="exception")) is False
+
+
+def test_masked_budget_exhausted_row_falls_through_to_regeneration():
+    # Regression (HLE_Math-240 shape, legacy schema): generation burned the
+    # whole budget with no visible answer, then a judge 401 overwrote the
+    # row's error. There is no response text to re-score, so treating it as
+    # judge-only would freeze the pollution; it must regenerate instead.
+    row = _result_row(model_response="", error="Error code: 401 - invalid key",
+                      extraction_method="empty_response", finish_reason="max_tokens")
+    assert RunCache._is_rejudgable_error(row) is False
+
+
+def test_judge_outage_lands_in_evaluator_error_preserving_finish_reason(monkeypatch):
+    # O12 core: an evaluator failure must not overwrite the generation
+    # terminal state — finish_reason/tokens stay authoritative on the row and
+    # resume re-judges without regenerating once the judge recovers.
+    async def _capped(_request):
+        return ModelResponse(
+            text="partial <answer>6</answer>",
+            tokens=TokenUsage(prompt_tokens=10, answer_tokens=5, reasoning_tokens=15,
+                              output_tokens=20, total_tokens=30),
+            latency=0, model="m", finish_reason="max_tokens",
+        )
+
+    provider_calls = []
+    provider = _register_fixed_provider("fake-capped-outage", calls=provider_calls,
+                                        dispatch=_capped)
+    judge = _ErroringJudge()
+    monkeypatch.setattr(math_eval, "build_judge", lambda cfg: judge)
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            ds = _dataset(tmp)
+            cache_path = str(Path(tmp) / "c.jsonl")
+            exp = BenchmarkRunner(_config(provider, ds), cache_path=cache_path).run()
+
+            assert all(r.evaluator_error == "judge timeout" for r in exp.results)
+            assert all(r.error is None for r in exp.results)
+            assert all(r.finish_reason == "max_tokens" for r in exp.results)
+
+            # Judge-only resume: generation is never re-run for these rows.
+            calls_before = len(provider_calls)
+            monkeypatch.setattr(math_eval, "build_judge", lambda cfg: _CountingJudge())
+            exp2 = BenchmarkRunner(_config(provider, ds), cache_path=cache_path).run()
+            assert len(provider_calls) == calls_before
+            assert exp2.summary.error_count == 0
+            assert all(r.evaluator_error is None for r in exp2.results)
+    finally:
+        registry._PROVIDER_REGISTRY.pop(provider, None)
+
+
+def test_empty_budget_exhausted_row_completes_without_judge(monkeypatch):
+    # The full O12 incident shape, post empty-response short-circuit: an empty
+    # budget-exhausted generation is a scoreable wrong answer. The judge (here
+    # a permanently failing one) is never consulted, so its outage cannot
+    # pollute the row, and resume treats the problem as completed.
+    async def _capped_empty(_request):
+        return ModelResponse(
+            text="",
+            tokens=TokenUsage(prompt_tokens=10, answer_tokens=0, reasoning_tokens=128000,
+                              output_tokens=128000, total_tokens=128010),
+            latency=0, model="m", finish_reason="max_tokens",
+        )
+
+    provider_calls = []
+    provider = _register_fixed_provider("fake-cap-empty", calls=provider_calls,
+                                        dispatch=_capped_empty)
+    judge = _ErroringJudge()
+    monkeypatch.setattr(math_eval, "build_judge", lambda cfg: judge)
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            ds = _dataset(tmp)
+            cache_path = str(Path(tmp) / "c.jsonl")
+            exp = BenchmarkRunner(_config(provider, ds), cache_path=cache_path).run()
+
+            assert judge.calls == 0
+            assert exp.summary.error_count == 0
+            assert exp.summary.correct_count == 0
+            assert all(r.error is None and r.evaluator_error is None for r in exp.results)
+            assert all(r.extracted_answer is None for r in exp.results)  # no ground-truth leak
+            assert all(r.finish_reason == "max_tokens" for r in exp.results)
+
+            # Completed rows: resume neither regenerates nor re-judges.
+            calls_before = len(provider_calls)
+            BenchmarkRunner(_config(provider, ds), cache_path=cache_path).run()
+            assert len(provider_calls) == calls_before
+            assert judge.calls == 0
     finally:
         registry._PROVIDER_REGISTRY.pop(provider, None)
 

@@ -97,7 +97,11 @@ class BenchmarkRunner:
             latency=latency,
             extraction_method=eval_result.extraction_method,
             judge_reasoning=eval_result.judge_reasoning,
-            error=eval_result.error,
+            # Generation succeeded on every path that reaches an evaluator, so a
+            # scorer failure lands in evaluator_error — never in the top-level
+            # error, which would masquerade as a generation failure and erase
+            # the generation terminal state from recovery decisions.
+            evaluator_error=eval_result.error,
             tests_passed=eval_result.tests_passed,
             tests_total=eval_result.tests_total,
             execution_error=eval_result.execution_error,
@@ -203,7 +207,12 @@ class BenchmarkRunner:
                 )
             except Exception as e:
                 logger.error(f"Exception re-judging cached problem {problem.id}: {e}")
-                result = cached.model_copy(update={"error": str(e), "extraction_method": "rejudge_exception"})
+                # Evaluator-side provenance; also clear a legacy top-level judge
+                # error so the row cannot read as a generation failure.
+                result = cached.model_copy(update={
+                    "error": None, "evaluator_error": str(e),
+                    "extraction_method": "rejudge_exception",
+                })
 
             self._append_to_cache(result)
             if pbar:
