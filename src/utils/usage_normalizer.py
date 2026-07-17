@@ -19,11 +19,12 @@ count (a repaired impossible split, or the Anthropic count_tokens fallback),
 ``answer_tokens_estimated`` is set so rows with estimated splits stay
 distinguishable in the cache and results.
 
-The Anthropic path is the only one that requires deriving the answer count from
-the visible text via a tokenizer; that work needs a network call, so it lives
-behind an injected ``count_tokens`` callback and an ``async`` normalize
-function, which keeps this module free of I/O and unit-testable without a
-network.
+The Anthropic path uses the provider's exact ``thinking_tokens`` detail when
+the stream reports it; only relays that omit the field fall back to deriving
+the answer count from the visible text via a tokenizer. That fallback needs a
+network call, so it lives behind an injected ``count_tokens`` callback and an
+``async`` normalize function, which keeps this module free of I/O and
+unit-testable without a network.
 """
 import logging
 import math
@@ -246,21 +247,29 @@ async def normalize_anthropic_usage(
     output_tokens: int,
     final_text: str,
     count_tokens: Callable[[str], Awaitable[Tuple[int, bool]]],
+    thinking_tokens: Optional[int] = None,
     cache_metrics: Optional[Mapping[str, int]] = None,
 ) -> NormalizedUsage:
-    """Normalize Anthropic usage, deriving the answer split via ``count_tokens``.
+    """Normalize Anthropic usage, preferring the provider's exact thinking count.
 
-    Anthropic reports only a combined ``output_tokens`` count, so the answer
-    count is obtained by running the visible answer text through the injected
-    ``count_tokens`` callback (which owns the count-tokens HTTP call and its
-    tokenizer fallback, and reports ``(count, estimated)`` so estimate-based
-    splits stay auditable). Empty text skips the callback entirely. The answer
-    count is clamped to the reported output, and reasoning is the remainder.
+    The official API reports ``output_tokens_details.thinking_tokens`` in the
+    final ``message_delta``; when the caller passes it and it fits inside the
+    combined output, the split is taken verbatim (reasoning = thinking, answer =
+    remainder) with no extra request. Only when the field is absent (compatible
+    relays) or impossible is the answer count derived by running the visible
+    answer text through the injected ``count_tokens`` callback (which owns the
+    count-tokens HTTP call and its tokenizer fallback, and reports ``(count,
+    estimated)`` so estimate-based splits stay auditable). Empty text skips the
+    callback entirely. The derived answer count is clamped to the reported
+    output, and reasoning is the remainder.
 
     Cache diagnostics, when present, are carried on the result and logged here so
     cache accounting stays observable without being surfaced in ``TokenUsage``.
     """
-    if final_text:
+    if thinking_tokens is not None and 0 <= thinking_tokens <= output_tokens:
+        answer_tokens = output_tokens - thinking_tokens
+        answer_estimated = False
+    elif final_text:
         counted, answer_estimated = await count_tokens(final_text)
         answer_tokens = min(counted, output_tokens)
     else:

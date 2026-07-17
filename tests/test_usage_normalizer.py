@@ -260,6 +260,43 @@ def test_normalize_anthropic_usage_marks_estimated_split():
     assert to_token_usage(n).answer_tokens_estimated is True
 
 
+def test_normalize_anthropic_official_thinking_skips_callback():
+    # Provider-exact split: reasoning = thinking, answer = remainder, no
+    # count_tokens call, not an estimate.
+    calls = []
+    n = asyncio.run(normalize_anthropic_usage(
+        prompt_tokens=5, output_tokens=50, final_text="hello",
+        count_tokens=_make_counter(30, calls), thinking_tokens=20,
+    ))
+    assert n.reasoning_tokens == 20
+    assert n.answer_tokens == 30
+    assert n.answer_tokens_estimated is False
+    assert calls == []
+
+
+def test_normalize_anthropic_official_thinking_zero():
+    calls = []
+    n = asyncio.run(normalize_anthropic_usage(
+        prompt_tokens=5, output_tokens=50, final_text="hello",
+        count_tokens=_make_counter(30, calls), thinking_tokens=0,
+    ))
+    assert n.reasoning_tokens == 0
+    assert n.answer_tokens == 50
+    assert calls == []
+
+
+def test_normalize_anthropic_impossible_thinking_falls_back():
+    # thinking > output cannot be a real split; fall back to derivation.
+    calls = []
+    n = asyncio.run(normalize_anthropic_usage(
+        prompt_tokens=5, output_tokens=50, final_text="hello",
+        count_tokens=_make_counter(30, calls), thinking_tokens=60,
+    ))
+    assert calls == ["hello"]
+    assert n.answer_tokens == 30
+    assert n.reasoning_tokens == 20
+
+
 def test_normalize_anthropic_usage_clamps_answer_to_output():
     calls = []
     n = asyncio.run(normalize_anthropic_usage(

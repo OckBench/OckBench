@@ -24,11 +24,13 @@ def _client(**overrides):
     return AnthropicClient(**{**CLIENT_KWARGS, **overrides})
 
 
-def _empty_sse(output_tokens, stop="end_turn"):
+def _empty_sse(output_tokens, stop="end_turn", thinking_tokens=None):
+    usage = {"output_tokens": output_tokens}
+    if thinking_tokens is not None:
+        usage["output_tokens_details"] = {"thinking_tokens": thinking_tokens}
     return _sse([
         {"type": "message_start", "message": {"usage": {"input_tokens": 10}, "model": "claude"}},
-        {"type": "message_delta", "usage": {"output_tokens": output_tokens},
-         "delta": {"stop_reason": stop}},
+        {"type": "message_delta", "usage": usage, "delta": {"stop_reason": stop}},
     ])
 
 
@@ -75,6 +77,62 @@ def test_reasoning_only_end_turn_is_retryable_error():
     _, resp = asyncio.run(drive_anthropic(
         _client(), body=_empty_sse(output_tokens=50, stop="end_turn")))
     assert resp.error is not None and "empty_response_reasoning_only" in resp.error
+
+
+# --------------------------------------------------------------------------- #
+# Official thinking_tokens split
+# --------------------------------------------------------------------------- #
+def test_official_thinking_tokens_split_skips_count_tokens():
+    # The official API reports output_tokens_details.thinking_tokens in the
+    # final message_delta. When present the split is taken verbatim — exact,
+    # not estimated — and the per-problem count_tokens request is skipped.
+    client = _client()
+    _, resp = asyncio.run(drive_anthropic(
+        client, body=anthropic_sse(output_tokens=50, thinking_tokens=42)))
+    assert resp.tokens.reasoning_tokens == 42
+    assert resp.tokens.answer_tokens == 8
+    assert resp.tokens.answer_tokens_estimated is False
+    assert client._count_tokens_calls == []
+
+
+def test_official_thinking_zero_is_trusted_directly():
+    client = _client()
+    _, resp = asyncio.run(drive_anthropic(
+        client, body=anthropic_sse(output_tokens=7, thinking_tokens=0)))
+    assert resp.tokens.reasoning_tokens == 0
+    assert resp.tokens.answer_tokens == 7
+    assert client._count_tokens_calls == []
+
+
+def test_missing_thinking_details_falls_back_to_count_tokens():
+    # Compatible relays omit the details field; the pre-existing derivation
+    # via count_tokens remains the fallback.
+    client = _client()
+    _, resp = asyncio.run(drive_anthropic(client, body=anthropic_sse(output_tokens=7)))
+    assert client._count_tokens_calls == ["Hi"]
+    assert resp.tokens.answer_tokens == 3   # from the injected counter
+    assert resp.tokens.reasoning_tokens == 4
+
+
+def test_impossible_thinking_count_falls_back():
+    # thinking > output is an impossible split; distrust it and derive.
+    client = _client()
+    _, resp = asyncio.run(drive_anthropic(
+        client, body=anthropic_sse(output_tokens=7, thinking_tokens=9)))
+    assert client._count_tokens_calls == ["Hi"]
+    assert resp.tokens.answer_tokens == 3
+    assert resp.tokens.reasoning_tokens == 4
+
+
+def test_max_tokens_exhaustion_with_official_thinking_split():
+    # Budget exhaustion with the official field: all output is thinking,
+    # answer is exactly zero, and the row stays scoreable.
+    _, resp = asyncio.run(drive_anthropic(_client(), body=_empty_sse(
+        output_tokens=128000, stop="max_tokens", thinking_tokens=128000)))
+    assert resp.error is None
+    assert resp.tokens.reasoning_tokens == 128000
+    assert resp.tokens.answer_tokens == 0
+    assert resp.tokens.answer_tokens_estimated is False
 
 
 # --------------------------------------------------------------------------- #

@@ -76,6 +76,7 @@ class AnthropicClient(BaseModelClient):
             text = ""
             input_tokens = 0
             output_tokens = 0
+            thinking_tokens = None
             cache_creation_tokens = 0
             cache_read_tokens = 0
             cache_ephemeral_5m = 0
@@ -127,6 +128,11 @@ class AnthropicClient(BaseModelClient):
                                 # usage in message_delta is cumulative; replace, don't add.
                                 usage = d.get("usage", {})
                                 output_tokens = usage.get("output_tokens", output_tokens)
+                                # The official API reports the exact thinking
+                                # count here; compatible relays may omit it.
+                                details = usage.get("output_tokens_details") or {}
+                                if details.get("thinking_tokens") is not None:
+                                    thinking_tokens = details["thinking_tokens"]
                                 cache_creation_tokens = (
                                     usage.get("cache_creation_input_tokens", cache_creation_tokens)
                                     or cache_creation_tokens
@@ -140,15 +146,17 @@ class AnthropicClient(BaseModelClient):
                         except json.JSONDecodeError:
                             continue
 
-            # Anthropic reports a combined output_tokens (thinking + answer). The
-            # normalization seam derives exact answer_tokens by running the
-            # visible answer text through the injected counter, then gets
-            # reasoning_tokens by subtraction. Cache metrics are logged only.
+            # The normalization seam takes the provider's exact thinking count
+            # verbatim when the stream reported it; only when the field is
+            # absent (compatible relays) does it derive answer_tokens by
+            # running the visible answer text through the injected counter and
+            # get reasoning_tokens by subtraction. Cache metrics are logged only.
             normalized = await normalize_anthropic_usage(
                 prompt_tokens=input_tokens,
                 output_tokens=output_tokens,
                 final_text=text,
                 count_tokens=self._count_tokens_exact,
+                thinking_tokens=thinking_tokens,
                 cache_metrics={
                     "cache_creation_tokens": cache_creation_tokens,
                     "cache_read_tokens": cache_read_tokens,

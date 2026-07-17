@@ -166,11 +166,15 @@ async def drive_responses(
     return fake.captured.get("json", {}), response
 
 
-def anthropic_sse(text="Hi", input_tokens=10, output_tokens=7, model="claude", stop="end_turn") -> str:
+def anthropic_sse(text="Hi", input_tokens=10, output_tokens=7, model="claude",
+                  stop="end_turn", thinking_tokens=None) -> str:
+    usage = {"output_tokens": output_tokens}
+    if thinking_tokens is not None:
+        usage["output_tokens_details"] = {"thinking_tokens": thinking_tokens}
     return _sse([
         {"type": "message_start", "message": {"usage": {"input_tokens": input_tokens}, "model": model}},
         {"type": "content_block_delta", "delta": {"type": "text_delta", "text": text}},
-        {"type": "message_delta", "usage": {"output_tokens": output_tokens}, "delta": {"stop_reason": stop}},
+        {"type": "message_delta", "usage": usage, "delta": {"stop_reason": stop}},
     ])
 
 
@@ -179,7 +183,13 @@ async def drive_anthropic(client, prompt="hi", max_output_tokens=100, body=None,
     fake = _FakeHTTPClient(body if body is not None else anthropic_sse())
     client._http_client = fake
 
-    async def fake_count(_text):
+    # Recorded on the client so tests can assert whether the per-problem
+    # count_tokens fallback was needed at all.
+    count_calls: List[str] = []
+    client._count_tokens_calls = count_calls
+
+    async def fake_count(text):
+        count_calls.append(text)
         return answer_token_count, False
     client._count_tokens_exact = fake_count
 
